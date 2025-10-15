@@ -94,10 +94,11 @@ export class PayrollController {
     const batch = await PayrollService.getBatchByName(batchName);
 
     if (!batch) {
-      return ApiResponse.error(res, "Batch not found", 404);
+      ApiResponse.error(res, "Batch not found", 404);
+      return;
     }
 
-    return ApiResponse.success(res, batch);
+    ApiResponse.success(res, batch);
   });
 
   /**

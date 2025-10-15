@@ -4,20 +4,13 @@ import { ApiResponse } from "../utils/response.util";
 import { asyncHandler } from "../middlewares/errorHandler.middleware";
 
 export class UserController {
-  /**
-   * GET /api/users/search/:username
-   * Search user by username for adding as signer
-   */
   static searchByUsername = asyncHandler(
     async (req: Request, res: Response) => {
       const { username } = req.params;
 
       if (!username || username.length < 3) {
-        return ApiResponse.error(
-          res,
-          "Username must be at least 3 characters",
-          400
-        );
+        ApiResponse.error(res, "Username must be at least 3 characters", 400);
+        return;
       }
 
       const user = await User.findOne({
@@ -28,13 +21,13 @@ export class UserController {
       );
 
       if (!user) {
-        return ApiResponse.error(res, "User not found", 404);
+        ApiResponse.error(res, "User not found", 404);
+        return;
       }
 
-      // Check if user is already a signer of another organization
       const isAlreadySigner = user.organizationId && user.role === "signer";
 
-      return ApiResponse.success(res, {
+      ApiResponse.success(res, {
         user: {
           username: user.username,
           surname: user.surname,
@@ -46,24 +39,20 @@ export class UserController {
           isAlreadySigner,
           currentOrganization: user.organizationSlug,
         },
-        canBeAdded: !isAlreadySigner, // Can only be signer in one org
+        canBeAdded: !isAlreadySigner,
       });
     }
   );
 
-  /**
-   * GET /api/users/suggest?query=john
-   * Auto-suggest usernames as user types
-   */
   static suggestUsernames = asyncHandler(
     async (req: Request, res: Response) => {
       const { query } = req.query;
 
       if (!query || (query as string).length < 2) {
-        return ApiResponse.success(res, { suggestions: [] });
+        ApiResponse.success(res, { suggestions: [] });
+        return;
       }
 
-      // Find users whose username starts with query
       const users = await User.find({
         username: { $regex: `^${query}`, $options: "i" },
         isActive: true,
@@ -77,23 +66,21 @@ export class UserController {
         avatar: u.avatar,
       }));
 
-      return ApiResponse.success(res, { suggestions });
+      ApiResponse.success(res, { suggestions });
     }
   );
 
-  /**
-   * POST /api/users/batch-lookup
-   * Look up multiple usernames at once
-   */
   static batchLookup = asyncHandler(async (req: Request, res: Response) => {
     const { usernames } = req.body;
 
     if (!Array.isArray(usernames) || usernames.length === 0) {
-      return ApiResponse.error(res, "Usernames array is required", 400);
+      ApiResponse.error(res, "Usernames array is required", 400);
+      return;
     }
 
     if (usernames.length > 20) {
-      return ApiResponse.error(res, "Maximum 20 usernames allowed", 400);
+      ApiResponse.error(res, "Maximum 20 usernames allowed", 400);
+      return;
     }
 
     const users = await User.find({
@@ -114,6 +101,6 @@ export class UserController {
       canBeAdded: !(user.organizationId && user.role === "signer"),
     }));
 
-    return ApiResponse.success(res, { users: results });
+    ApiResponse.success(res, { users: results });
   });
 }
