@@ -85,6 +85,22 @@ export class PayrollController {
   });
 
   /**
+   * GET /api/payroll/batches/:batchName
+   * Get single batch details
+   */
+  static getBatchByName = asyncHandler(async (req: Request, res: Response) => {
+    const { batchName } = req.params;
+
+    const batch = await PayrollService.getBatchByName(batchName);
+
+    if (!batch) {
+      return ApiResponse.error(res, "Batch not found", 404);
+    }
+
+    return ApiResponse.success(res, batch);
+  });
+
+  /**
    * POST /api/payroll/batches/:batchName/cancel
    * Record cancellation after frontend calls smart contract
    */
