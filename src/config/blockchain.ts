@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
-import { ENV } from "./environment.js";
-import { ERC20_ABI } from "./abi/erc20ABI.js";
-import { FACTORY_ABI } from "./abi/factoryABI.js";
+import { ENV } from "./environment";
+import { ERC20_ABI } from "./abi/erc20ABI";
+import { FACTORY_ABI } from "./abi/factoryABI";
 
 export const provider = new ethers.JsonRpcProvider(ENV.RPC_URL);
 
