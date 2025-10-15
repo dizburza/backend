@@ -69,6 +69,10 @@ export const ValidationRules = {
       .optional()
       .isMobilePhone("any")
       .withMessage("Invalid phone number"),
+    body("avatar")
+      .optional()
+      .isURL()
+      .withMessage("Avatar must be a valid URL"),
     body("role")
       .optional()
       .isIn(["employee", "signer", "admin"])
