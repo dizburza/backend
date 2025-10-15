@@ -46,6 +46,7 @@ export class AuthService {
       fullName: data.fullName || `${data.firstname} ${data.surname}`,
       email: data.email,
       phoneNumber: data.phoneNumber,
+      avatar: data.avatar,
       role: data.role || "employee",
       authNonce: this.generateNonce(),
     });

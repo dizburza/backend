@@ -6,6 +6,7 @@ export interface UserRegistrationData {
   fullName: string;
   email: string;
   phoneNumber?: string;
+  avatar?: string;
   role?: "employee" | "signer" | "admin";
 }
 

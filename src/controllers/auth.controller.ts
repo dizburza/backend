@@ -8,16 +8,28 @@ export class AuthController {
    * POST /api/auth/register
    */
   static register = asyncHandler(async (req: Request, res: Response) => {
-    const { walletAddress, surname, firstname, email, phoneNumber, avatar } =
-      req.body;
-
-    const result = await AuthService.register({
+    const {
       walletAddress,
+      username,
       surname,
       firstname,
+      fullName,
       email,
       phoneNumber,
       avatar,
+      role,
+    } = req.body;
+
+    const result = await AuthService.register({
+      walletAddress,
+      username,
+      surname,
+      firstname,
+      fullName,
+      email,
+      phoneNumber,
+      avatar,
+      role,
     });
 
     ApiResponse.created(res, result, "User registered successfully");
@@ -40,7 +52,6 @@ export class AuthController {
 
   /**
    * GET /api/auth/check/:address
-   * Check if user is registered and get redirect path
    */
   static checkStatus = asyncHandler(async (req: Request, res: Response) => {
     const { address } = req.params;
