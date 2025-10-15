@@ -19,9 +19,9 @@ const app = express();
 app.use(corsMiddleware);
 app.use(helmetMiddleware);
 app.use(hppMiddleware);
-app.use(sanitizeMiddleware);
 app.use(express.json({ limit: "10mb" }));
 app.use(express.urlencoded({ extended: true }));
+app.use(sanitizeMiddleware);
 
 // Logging & rate limiting
 app.use(requestLogger);
@@ -29,6 +29,10 @@ app.use(generalLimiter);
 
 // API routes
 app.use("/api", routes);
+
+app.get("/", (_req, res) => {
+  res.send("🚀 Dizburza Backend API is running...");
+});
 
 // Error handling
 app.use(notFoundHandler);

@@ -43,6 +43,9 @@ npm start
 
 ## API Endpoints
 
+### Health Check
+- GET `/api/health` - Get backend health
+
 ### Authentication
 - POST `/api/auth/register` - Register new user
 - POST `/api/auth/login` - Login with wallet signature
