@@ -1,10 +1,7 @@
 import { Router } from "express";
 import { UserController } from "../controllers/user.controller";
-import { authenticate, optionalAuth } from "../middlewares/auth.middleware";
-import {
-  validate,
-  ValidationRules,
-} from "../middlewares/validation.middleware";
+import { authenticate } from "../middlewares/auth.middleware";
+import { validate } from "../middlewares/validation.middleware";
 import { param, query, body } from "express-validator";
 
 const router = Router();

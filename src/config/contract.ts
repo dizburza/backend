@@ -1,6 +1,6 @@
 import { ethers } from "ethers";
 import { ENV } from "./environment.js";
-import { ERC20_ABI } from "./abi/ERC20ABI.js";
+import { ERC20_ABI } from "./abi/erc20ABI.js";
 import { FACTORY_ABI } from "./abi/factoryABI.js";
 // import { DIZBURZA_ABI } from "./abi/dizburzaABI.js";
 

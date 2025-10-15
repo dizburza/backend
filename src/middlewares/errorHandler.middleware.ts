@@ -23,12 +23,12 @@ export const errorHandler = (
 ) => {
   let statusCode = 500;
   let message = "Internal server error";
-  let isOperational = false;
+  // let isOperational = false;
 
   if (err instanceof AppError) {
     statusCode = err.statusCode;
     message = err.message;
-    isOperational = err.isOperational;
+    // isOperational = err.isOperational;
   }
 
   // Log error
