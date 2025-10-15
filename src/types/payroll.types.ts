@@ -27,7 +27,7 @@ export type Industry =
   | "Logistics";
 
 // ✅ INPUT TYPE - What the client sends
-  export interface CreateOrganizationInput {
+export interface CreateOrganizationInput {
   name: string;
   contractAddress: string;
   creatorAddress: string;
@@ -94,6 +94,19 @@ export interface OrganizationData {
     defaultPaymentDay?: number;
     timeZone?: string;
   };
+}
+
+export interface CreateBatchInput {
+  batchName: string;
+  organizationId: string;
+  organizationAddress: string;
+  creatorAddress: string;
+  recipients: {
+    userId?: string;
+    walletAddress: string;
+    amount: string;
+    employeeName: string;
+  }[];
 }
 
 export interface BatchPayrollData {
