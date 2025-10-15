@@ -1,9 +1,9 @@
 export interface UserRegistrationData {
   walletAddress: string;
-  username: string;
+  username?: string;
   surname: string;
   firstname: string;
-  fullName: string;
+  fullName?: string;
   email: string;
   phoneNumber?: string;
   avatar?: string;

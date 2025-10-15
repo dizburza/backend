@@ -33,8 +33,7 @@ export const ValidationRules = {
       .withMessage("Invalid wallet address"),
     body("username")
       .trim()
-      .notEmpty()
-      .withMessage("Username is required")
+      .optional({ values: "falsy" })
       .isLength({ min: 3, max: 30 })
       .withMessage("Username must be 3-30 characters")
       .matches(/^[a-zA-Z0-9_]+$/)
@@ -55,8 +54,7 @@ export const ValidationRules = {
       .withMessage("Firstname must be 2-50 characters"),
     body("fullName")
       .trim()
-      .notEmpty()
-      .withMessage("Full name is required")
+      .optional({ values: "falsy" })
       .isLength({ min: 4, max: 100 })
       .withMessage("Full name must be 4-100 characters"),
     body("email")
@@ -66,15 +64,12 @@ export const ValidationRules = {
       .withMessage("Invalid email address")
       .normalizeEmail(),
     body("phoneNumber")
-      .optional()
+      .optional({ values: "falsy" })
       .isMobilePhone("any")
       .withMessage("Invalid phone number"),
-    body("avatar")
-      .optional()
-      .isURL()
-      .withMessage("Avatar must be a valid URL"),
+    body("avatar").optional().isURL().withMessage("Avatar must be a valid URL"),
     body("role")
-      .optional()
+      .optional({ values: "falsy" })
       .isIn(["employee", "signer", "admin"])
       .withMessage("Invalid role"),
   ],
