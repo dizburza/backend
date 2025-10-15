@@ -19,9 +19,9 @@ const app = express();
 app.use(corsMiddleware);
 app.use(helmetMiddleware);
 app.use(hppMiddleware);
-app.use(express.json());
-app.use(express.urlencoded({ extended: true }));
 app.use(sanitizeMiddleware);
+app.use(express.json({ limit: "10mb" }));
+app.use(express.urlencoded({ extended: true }));
 
 // Logging & rate limiting
 app.use(requestLogger);
