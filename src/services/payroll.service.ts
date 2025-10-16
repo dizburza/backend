@@ -6,6 +6,7 @@ import mongoose from "mongoose";
 import {
   CreateOrganizationInput,
   CreateBatchInput,
+  AddEmployeeData,
 } from "../types/payroll.types";
 
 export class PayrollService {
@@ -90,15 +91,33 @@ export class PayrollService {
   }
 
   /**
-   * Add employee to organization
+   * Add employee to organization with role and salary
    */
-  static async addEmployee(organizationId: string, employeeAddress: string) {
+  static async addEmployee(organizationId: string, data: AddEmployeeData) {
+    // Find user by username
     const user = await User.findOne({
-      walletAddress: employeeAddress.toLowerCase(),
+      username: data.username.toLowerCase(),
+      isActive: true,
     });
 
     if (!user) {
-      throw new Error("User not found");
+      throw new Error(`User with username "${data.username}" not found`);
+    }
+
+    // Check if user is already in another organization
+    if (
+      user.organizationId &&
+      user.organizationId.toString() !== organizationId
+    ) {
+      throw new Error(`User is already an employee of another organization`);
+    }
+
+    // Check if user is already in this organization
+    if (
+      user.organizationId &&
+      user.organizationId.toString() === organizationId
+    ) {
+      throw new Error(`User is already an employee of this organization`);
     }
 
     const organization = await Organization.findById(organizationId);
@@ -106,15 +125,123 @@ export class PayrollService {
       throw new Error("Organization not found");
     }
 
+    // Update user with organization and job details
     user.organizationId = new mongoose.Types.ObjectId(organizationId);
     user.organizationSlug = organization.slug;
+    user.jobDetails = {
+      jobRole: data.jobRole,
+      salary: data.salary,
+      department: data.department,
+      employeeId: data.employeeId,
+      joinedAt: new Date(),
+    };
     await user.save();
 
+    // Add to organization's employees array
     await Organization.findByIdAndUpdate(organizationId, {
       $addToSet: { employees: user._id },
     });
 
     return user;
+  }
+
+  /**
+   * Update employee details
+   */
+  static async updateEmployee(
+    organizationId: string,
+    username: string,
+    updates: {
+      jobRole?: string;
+      salary?: string;
+      department?: string;
+      employeeId?: string;
+    }
+  ) {
+    const user = await User.findOne({
+      username: username.toLowerCase(),
+      organizationId: new mongoose.Types.ObjectId(organizationId),
+      isActive: true,
+    });
+
+    if (!user) {
+      throw new Error("Employee not found in this organization");
+    }
+
+    // Update job details
+    user.jobDetails = {
+      ...user.jobDetails,
+      ...updates,
+    };
+    await user.save();
+
+    return user;
+  }
+
+  /**
+   * Remove employee from organization
+   */
+  static async removeEmployee(organizationId: string, username: string) {
+    const user = await User.findOne({
+      username: username.toLowerCase(),
+      organizationId: new mongoose.Types.ObjectId(organizationId),
+      isActive: true,
+    });
+
+    if (!user) {
+      throw new Error("Employee not found in this organization");
+    }
+
+    // Check if user is a signer
+    const organization = await Organization.findById(organizationId);
+    if (organization) {
+      const isSigner = organization.signers.some(
+        (s) => s.address.toLowerCase() === user.walletAddress.toLowerCase()
+      );
+      if (isSigner) {
+        throw new Error(
+          "Cannot remove a signer as employee. Remove from signers first."
+        );
+      }
+    }
+
+    // Remove organization details from user
+    user.organizationId = undefined;
+    user.organizationSlug = undefined;
+    user.jobDetails = undefined;
+    user.role = "employee";
+    await user.save();
+
+    // Remove from organization's employees array
+    await Organization.findByIdAndUpdate(organizationId, {
+      $pull: { employees: user._id },
+    });
+
+    return user;
+  }
+
+  /**
+   * Get organization employees with full details
+   */
+  static async getOrganizationEmployees(organizationId: string) {
+    const organization = await Organization.findById(organizationId).populate({
+      path: "employees",
+      select:
+        "username fullName surname firstname walletAddress email avatar jobDetails role createdAt",
+    });
+
+    if (!organization) {
+      throw new Error("Organization not found");
+    }
+
+    return {
+      organization: {
+        name: organization.name,
+        slug: organization.slug,
+      },
+      employees: organization.employees,
+      totalEmployees: organization.employees.length,
+    };
   }
 
   /**

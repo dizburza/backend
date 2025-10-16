@@ -56,13 +56,38 @@ router.get(
   OrganizationController.getById
 );
 
-// Add employee to organization
+// Employee Management
 router.post(
   "/:id/employees",
   authenticate,
   requireRole("signer", "admin"),
-  validate([param("id").isMongoId().withMessage("Invalid organization ID")]),
+  validate(ValidationRules.addEmployee),
   OrganizationController.addEmployee
+);
+
+router.get(
+  "/:id/employees",
+  authenticate,
+  validate([
+    param("id").isMongoId().withMessage("Invalid organization ID"),
+  ]),
+  OrganizationController.getEmployees
+);
+
+router.patch(
+  "/:id/employees/:username",
+  authenticate,
+  requireRole("signer", "admin"),
+  validate(ValidationRules.updateEmployee),
+  OrganizationController.updateEmployee
+);
+
+router.delete(
+  "/:id/employees/:username",
+  authenticate,
+  requireRole("signer", "admin"),
+  validate(ValidationRules.deleteEmployee),
+  OrganizationController.removeEmployee
 );
 
 export default router;

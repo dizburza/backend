@@ -152,6 +152,65 @@ export const ValidationRules = {
       .withMessage("Description must be less than 500 characters"),
   ],
 
+  // Add employee
+  addEmployee: [
+    param("id").isMongoId().withMessage("Invalid organization ID"),
+    body("username")
+      .trim()
+      .notEmpty()
+      .withMessage("Username is required")
+      .isLength({ min: 3, max: 30 })
+      .withMessage("Username must be 3-30 characters"),
+    body("jobRole")
+      .trim()
+      .notEmpty()
+      .withMessage("Job role is required")
+      .isLength({ min: 2, max: 100 })
+      .withMessage("Job role must be 2-100 characters"),
+    body("salary")
+      .notEmpty()
+      .withMessage("Salary is required")
+      .custom(ValidationUtil.isPositiveAmount)
+      .withMessage("Salary must be a positive number"),
+    body("department")
+      .optional({ values: "falsy" })
+      .trim()
+      .isLength({ max: 100 })
+      .withMessage("Department must be less than 100 characters"),
+    body("employeeId")
+      .optional({ values: "falsy" })
+      .trim()
+      .isLength({ max: 50 })
+      .withMessage("Employee ID must be less than 50 characters"),
+  ],
+
+  // Update employee
+  updateEmployee: [
+    param("id").isMongoId().withMessage("Invalid organization ID"),
+    param("username")
+      .trim()
+      .notEmpty()
+      .withMessage("Username is required"),
+    body("jobRole")
+      .optional({ values: "falsy" })
+      .trim()
+      .isLength({ min: 2, max: 100 })
+      .withMessage("Job role must be 2-100 characters"),
+    body("salary")
+      .optional({ values: "falsy" })
+      .custom(ValidationUtil.isPositiveAmount)
+      .withMessage("Salary must be a positive number"),
+  ],
+
+  // Delete employee
+  deleteEmployee: [
+    param("id").isMongoId().withMessage("Invalid organization ID"),
+    param("username")
+      .trim()
+      .notEmpty()
+      .withMessage("Username is required"),
+  ],
+
   // Login validation
   login: [
     body("walletAddress")

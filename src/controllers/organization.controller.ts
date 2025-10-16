@@ -87,16 +87,59 @@ export class OrganizationController {
    */
   static addEmployee = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
-    const { employeeAddress } = req.body;
+    const { username, jobRole, salary, department, employeeId } = req.body;
 
-    if (!employeeAddress) {
-      ApiResponse.error(res, "Employee address is required", 400);
-      return;
-    }
-
-    const user = await PayrollService.addEmployee(id, employeeAddress);
+    const user = await PayrollService.addEmployee(id, {
+      username,
+      jobRole,
+      salary,
+      department,
+      employeeId,
+    });
 
     ApiResponse.success(res, user, "Employee added successfully");
+  });
+
+  /**
+   * GET /api/organizations/:id/employees
+   * Get all employees in organization
+   */
+  static getEmployees = asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+
+    const result = await PayrollService.getOrganizationEmployees(id);
+
+    ApiResponse.success(res, result);
+  });
+
+  /**
+   * PATCH /api/organizations/:id/employees/:username
+   * Update employee details
+   */
+  static updateEmployee = asyncHandler(async (req: Request, res: Response) => {
+    const { id, username } = req.params;
+    const { jobRole, salary, department, employeeId } = req.body;
+
+    const user = await PayrollService.updateEmployee(id, username, {
+      jobRole,
+      salary,
+      department,
+      employeeId,
+    });
+
+    ApiResponse.success(res, user, "Employee updated successfully");
+  });
+
+  /**
+   * DELETE /api/organizations/:id/employees/:username
+   * Remove employee from organization
+   */
+  static removeEmployee = asyncHandler(async (req: Request, res: Response) => {
+    const { id, username } = req.params;
+
+    const user = await PayrollService.removeEmployee(id, username);
+
+    ApiResponse.success(res, user, "Employee removed successfully");
   });
 
   /**

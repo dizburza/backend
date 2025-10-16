@@ -14,6 +14,14 @@ export interface IUser extends Document {
   organizationId?: mongoose.Types.ObjectId;
   organizationSlug?: string;
 
+  jobDetails?: {
+    jobRole?: string;
+    salary?: string;
+    department?: string;
+    joinedAt?: Date;
+    employeeId?: string;
+  };
+
   profile: {
     dateOfBirth?: Date;
     address?: string;
@@ -68,6 +76,13 @@ const UserSchema = new Schema<IUser>(
       index: true,
     },
     organizationSlug: { type: String, index: true },
+    jobDetails: {
+      jobRole: String,
+      salary: String,
+      department: String,
+      joinedAt: Date,
+      employeeId: String,
+    },
     profile: {
       dateOfBirth: Date,
       address: String,
@@ -91,5 +106,6 @@ const UserSchema = new Schema<IUser>(
 
 UserSchema.index({ walletAddress: 1, isActive: 1 });
 UserSchema.index({ email: 1 });
+UserSchema.index({ organizationId: 1, "jobDetails.jobRole": 1 });
 
 export const User = mongoose.model<IUser>("User", UserSchema);
