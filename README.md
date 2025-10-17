@@ -167,7 +167,7 @@ curl http://localhost:5000/api/health
 | GET | `/wallet/:address/balance` | Get cNGN balance |
 | GET | `/transactions/:address` | Get transaction history |
 
-📖 **[View Complete API Documentation →](./API_TESTING_GUIDE.md)**
+📖 **[View Complete API Documentation →](./tests/API_TESTING_GUIDE.md)**
 
 ---
 
