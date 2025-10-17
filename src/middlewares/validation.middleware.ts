@@ -187,10 +187,7 @@ export const ValidationRules = {
   // Update employee
   updateEmployee: [
     param("id").isMongoId().withMessage("Invalid organization ID"),
-    param("username")
-      .trim()
-      .notEmpty()
-      .withMessage("Username is required"),
+    param("username").trim().notEmpty().withMessage("Username is required"),
     body("jobRole")
       .optional({ values: "falsy" })
       .trim()
@@ -205,10 +202,7 @@ export const ValidationRules = {
   // Delete employee
   deleteEmployee: [
     param("id").isMongoId().withMessage("Invalid organization ID"),
-    param("username")
-      .trim()
-      .notEmpty()
-      .withMessage("Username is required"),
+    param("username").trim().notEmpty().withMessage("Username is required"),
   ],
 
   // Login validation
@@ -251,6 +245,12 @@ export const ValidationRules = {
       .custom(ValidationUtil.isValidBatchName)
       .withMessage("Invalid batch name"),
     body("organizationId").isMongoId().withMessage("Invalid organization ID"),
+    body("organizationAddress")
+      .custom(ValidationUtil.isValidAddress)
+      .withMessage("Invalid organization address"),
+    body("creatorAddress")
+      .custom(ValidationUtil.isValidAddress)
+      .withMessage("Invalid creator address"),
     body("recipients")
       .isArray({ min: 1, max: 100 })
       .withMessage("Recipients must be an array with 1-100 items"),
@@ -260,20 +260,20 @@ export const ValidationRules = {
     body("recipients.*.amount")
       .custom(ValidationUtil.isPositiveAmount)
       .withMessage("Invalid recipient amount"),
-    body("recipients.*.employeeName") // ✅ Add this
+    body("recipients.*.employeeName")
       .trim()
       .notEmpty()
       .withMessage("Employee name is required")
       .isLength({ min: 2, max: 100 })
       .withMessage("Employee name must be 2-100 characters"),
-    body("totalAmount")
-      .custom(ValidationUtil.isPositiveAmount)
-      .withMessage("Invalid total amount"),
-    body("quorumRequired")
-      .isInt({ min: 1 })
-      .withMessage("Quorum must be at least 1"),
-    body("submittedAt").isISO8601().withMessage("Invalid submitted date"),
-    body("expiresAt").isISO8601().withMessage("Invalid expiration date"),
+    body("txHash")
+      .optional({ values: "falsy" })
+      .isString()
+      .withMessage("Transaction hash must be a string"),
+    body("blockNumber")
+      .optional({ values: "falsy" })
+      .isInt()
+      .withMessage("Block number must be an integer"),
   ],
 
   // Query pagination
