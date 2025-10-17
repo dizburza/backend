@@ -77,8 +77,8 @@ JWT_SECRET=your-super-secret-jwt-key-change-this
 JWT_EXPIRY=24h
 
 # Blockchain
-BLOCKCHAIN_RPC_URL=https://rpc.sepolia-api.lisk.com
-CNNG_CONTRACT_ADDRESS=0x...
+RPC_URL=https://rpc.sepolia-api.lisk.com
+cNGN_CONTRACT_ADDRESS=0x...
 PRIVATE_KEY=your-private-key-for-event-listening
 
 # Frontend
@@ -300,7 +300,7 @@ lsof -ti:5000 | xargs kill -9
 - Verify network connectivity
 
 ### Blockchain Listener Not Starting
-- Check `BLOCKCHAIN_RPC_URL` is valid
+- Check `RPC_URL` is valid
 - Verify `CNNG_CONTRACT_ADDRESS` is correct
 - Ensure private key has permissions
 
@@ -313,8 +313,8 @@ lsof -ti:5000 | xargs kill -9
 | `PORT` | Server port | No (default: 5000) |
 | `MONGODB_URI` | MongoDB connection string | Yes |
 | `JWT_SECRET` | JWT signing secret | Yes |
-| `BLOCKCHAIN_RPC_URL` | Lisk Sepolia RPC endpoint | Yes |
-| `CNNG_CONTRACT_ADDRESS` | cNGN token address | Yes |
+| `RPC_URL` | Lisk Sepolia RPC endpoint | Yes |
+| `cNGN_CONTRACT_ADDRESS` | cNGN token address | Yes |
 | `FRONTEND_URL` | Frontend URL for CORS | Yes |
 
 ---
@@ -340,7 +340,7 @@ This project is licensed under the MIT License.
 - [Frontend Repository](#)
 - [Smart Contracts Repository](#)
 - [Documentation](#)
-- [API Testing Guide](./API_TESTING_GUIDE.md)
+- [API Testing Guide](./tests/API_TESTING_GUIDE.md)
 
 ---
 
