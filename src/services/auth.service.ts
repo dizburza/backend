@@ -3,7 +3,7 @@ import { User, IUser } from "../models/User.model";
 import { Organization } from "../models/Organization.model";
 import { ENV } from "../config/environment";
 import { CryptoUtil } from "../utils/crypto.util";
-import crypto from "crypto";
+import crypto from "node:crypto";
 import { UserRegistrationData, LoginData } from "../types/user.types";
 
 export class AuthService {
@@ -176,8 +176,16 @@ export class AuthService {
       organizationSlug: user.organizationSlug,
     };
 
+    const rawExpiry = ENV.JWT_EXPIRY;
+    const numericExpiry = Number(rawExpiry);
+
+    const expiresIn: SignOptions["expiresIn"] =
+      rawExpiry && !Number.isNaN(numericExpiry)
+        ? numericExpiry
+        : (rawExpiry as unknown as SignOptions["expiresIn"]);
+
     const options: SignOptions = {
-      expiresIn: Number(ENV.JWT_EXPIRY),
+      expiresIn,
     };
 
     return jwt.sign(payload, ENV.JWT_SECRET, options);
