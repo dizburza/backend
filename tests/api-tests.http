@@ -1,0 +1,242 @@
+@baseUrl = http://localhost:5000/api
+
+@signerAddress = 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1
+@employeeAddress = 0x9876543210fedcba9876543210fedcba98765432
+
+# Set these after running the register/login requests
+@token = YOUR_TOKEN_HERE
+@signerToken = YOUR_SIGNER_TOKEN_HERE
+
+# Set these after creating an organization / employee / payroll batch
+@organizationId = 507f1f77bcf86cd799439011
+@organizationSlug = tech-innovations-ltd
+@organizationContractAddress = 0x1234567890abcdef1234567890abcdef12345678
+
+@employeeUsername = johnson_alice_987654
+@batchName = january_2025_payroll
+
+### TEST 1: Health Check
+GET {{baseUrl}}/health
+
+### TEST 2: Register User (Signer-to-be)
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "walletAddress": "{{signerAddress}}",
+  "surname": "Doe",
+  "firstname": "John",
+  "email": "john@example.com",
+  "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=John"
+}
+
+### TEST 3: Get My Profile
+GET {{baseUrl}}/auth/me
+Authorization: Bearer {{token}}
+
+### TEST 4: Check User Status
+GET {{baseUrl}}/auth/check/{{signerAddress}}
+
+### TEST 5: Get Auth Message
+GET {{baseUrl}}/auth/message/{{signerAddress}}
+
+### (Optional) Login with signature
+# This endpoint exists in the API reference but is not fully specified in the guide.
+# Fill in the body fields to match your backend's expected payload.
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "walletAddress": "{{signerAddress}}",
+  "signature": "0xYOUR_SIGNATURE_HERE"
+}
+
+### TEST 6: Get Wallet Balance
+GET {{baseUrl}}/wallet/{{signerAddress}}/balance
+
+### TEST 7: Get Wallet Summary (Auth)
+GET {{baseUrl}}/wallet/{{signerAddress}}/summary
+Authorization: Bearer {{token}}
+
+### TEST 8: Get Transaction History
+GET {{baseUrl}}/transactions/{{signerAddress}}?page=1&limit=10
+
+### TEST 9: Create Organization (Auth: signer token after re-login)
+POST {{baseUrl}}/organizations
+Authorization: Bearer {{token}}
+Content-Type: application/json
+
+{
+  "name": "Tech Innovations Ltd",
+  "contractAddress": "{{organizationContractAddress}}",
+  "creatorAddress": "{{signerAddress}}",
+  "businessEmail": "info@techinnovations.com",
+  "businessInfo": {
+    "registrationNumber": "RC123456",
+    "registrationType": "Limited Liability Company (Ltd)"
+  },
+  "signers": [
+    {
+      "address": "{{signerAddress}}",
+      "name": "John Doe",
+      "role": "CEO"
+    }
+  ],
+  "quorum": 1,
+  "metadata": {
+    "industry": "Information Technology",
+    "size": "11-50",
+    "description": "A leading tech company"
+  }
+}
+
+### TEST 10: Get All Organizations (Auth)
+GET {{baseUrl}}/organizations
+Authorization: Bearer {{token}}
+
+### TEST 11: Get Organization by Slug
+GET {{baseUrl}}/organizations/slug/{{organizationSlug}}
+
+### TEST 12: Register Employee User
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "walletAddress": "{{employeeAddress}}",
+  "surname": "Johnson",
+  "firstname": "Alice",
+  "email": "alice@example.com"
+}
+
+### TEST 13: Add Employee to Organization (Auth: signer token)
+POST {{baseUrl}}/organizations/{{organizationId}}/employees
+Authorization: Bearer {{signerToken}}
+Content-Type: application/json
+
+{
+  "username": "{{employeeUsername}}",
+  "jobRole": "Senior Developer",
+  "salary": "5000000000",
+  "department": "Engineering",
+  "employeeId": "EMP001"
+}
+
+### TEST 14: Get Organization Employees (Auth)
+GET {{baseUrl}}/organizations/{{organizationId}}/employees
+Authorization: Bearer {{token}}
+
+### TEST 15: Update Employee Details (Auth: signer token)
+PATCH {{baseUrl}}/organizations/{{organizationId}}/employees/{{employeeUsername}}
+Authorization: Bearer {{signerToken}}
+Content-Type: application/json
+
+{
+  "salary": "6000000000",
+  "jobRole": "Lead Developer",
+  "department": "Engineering"
+}
+
+### TEST 16: Remove Employee from Organization (Auth: signer token)
+DELETE {{baseUrl}}/organizations/{{organizationId}}/employees/{{employeeUsername}}
+Authorization: Bearer {{signerToken}}
+
+### TEST 17: Create Batch Payroll (Auth: signer token)
+POST {{baseUrl}}/payroll/batches
+Authorization: Bearer {{signerToken}}
+Content-Type: application/json
+
+{
+  "batchName": "{{batchName}}",
+  "organizationId": "{{organizationId}}",
+  "organizationAddress": "{{organizationContractAddress}}",
+  "creatorAddress": "{{signerAddress}}",
+  "recipients": [
+    {
+      "walletAddress": "{{employeeAddress}}",
+      "amount": "5000000000",
+      "employeeName": "Alice Johnson"
+    }
+  ]
+}
+
+### TEST 18: Get Batches for Organization (Auth)
+GET {{baseUrl}}/payroll/organizations/{{organizationId}}/batches?status=pending
+Authorization: Bearer {{token}}
+
+### TEST 19: Get Batch Details (Auth)
+GET {{baseUrl}}/payroll/batches/{{batchName}}
+Authorization: Bearer {{token}}
+
+### TEST 20: Approve Batch (Auth: signer token)
+POST {{baseUrl}}/payroll/batches/{{batchName}}/approve
+Authorization: Bearer {{signerToken}}
+Content-Type: application/json
+
+{
+  "signerAddress": "{{signerAddress}}",
+  "signerName": "John Doe"
+}
+
+### TEST 21: Execute Batch (Auth: signer token)
+POST {{baseUrl}}/payroll/batches/{{batchName}}/execute
+Authorization: Bearer {{signerToken}}
+Content-Type: application/json
+
+{
+  "executorAddress": "{{signerAddress}}",
+  "txHash": "0xdef456abc789def456abc789def456abc789def456abc789def456abc789def456"
+}
+
+### (Optional) Cancel Batch (Auth: signer token)
+POST {{baseUrl}}/payroll/batches/{{batchName}}/cancel
+Authorization: Bearer {{signerToken}}
+Content-Type: application/json
+
+{
+  "cancellerAddress": "{{signerAddress}}",
+  "reason": "Testing cancel flow"
+}
+
+### TEST 22: Search User by Username (Auth)
+GET {{baseUrl}}/users/search/{{employeeUsername}}
+Authorization: Bearer {{token}}
+
+### TEST 23: Suggest Usernames (Auth)
+GET {{baseUrl}}/users/suggest?query=john
+Authorization: Bearer {{token}}
+
+### (Extra) Wallet sync (Auth not specified in guide)
+POST {{baseUrl}}/wallet/{{signerAddress}}/sync
+Content-Type: application/json
+
+{}
+
+### (Extra) Record new transaction (Auth not specified in guide)
+POST {{baseUrl}}/transactions/record
+Content-Type: application/json
+
+{
+  "from": "{{signerAddress}}",
+  "to": "{{employeeAddress}}",
+  "amount": "1000000",
+  "currency": "cNGN",
+  "type": "send",
+  "status": "pending"
+}
+
+### (Extra) Org lookup by signer address (Auth not specified in guide)
+GET {{baseUrl}}/organizations/signer/{{signerAddress}}
+
+### (Extra) Org lookup by creator address (Auth not specified in guide)
+GET {{baseUrl}}/organizations/creator/{{signerAddress}}
+
+### (Extra) Org lookup by ID
+GET {{baseUrl}}/organizations/{{organizationId}}
+
+### (Extra) Users batch lookup
+POST {{baseUrl}}/users/batch-lookup
+Content-Type: application/json
+
+{
+  "usernames": ["{{employeeUsername}}"]
+}
