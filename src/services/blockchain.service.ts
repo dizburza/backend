@@ -1,5 +1,5 @@
 import { ethers } from "ethers";
-import { provider, cNGNContract } from "../config/blockchain";
+import { provider, cNGNContract } from "../config/blockchain.js";
 
 export class BlockchainService {
   /**
@@ -15,7 +15,7 @@ export class BlockchainService {
     try {
       const receipt = await provider.getTransactionReceipt(txHash);
 
-      if (!receipt || receipt.status !== 1) {
+      if (receipt?.status !== 1) {
         return { isValid: false };
       }
 
@@ -24,11 +24,13 @@ export class BlockchainService {
         return { isValid: false };
       }
 
+      const cngnAddress = (await cNGNContract.getAddress()).toLowerCase();
+
       // Parse Transfer event from logs
       const transferLog = receipt.logs.find(
         (log) =>
           log.address.toLowerCase() ===
-          cNGNContract.target.toString().toLowerCase()
+          cngnAddress
       );
 
       if (!transferLog) {

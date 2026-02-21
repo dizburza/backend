@@ -1,5 +1,6 @@
 import { ethers } from "ethers";
-import crypto from "crypto";
+import crypto from "node:crypto";
+import logger from "./logger.util.js";
 
 export class CryptoUtil {
   /**
@@ -28,9 +29,9 @@ export class CryptoUtil {
     return name
       .toLowerCase()
       .trim()
-      .replace(/[^\w\s-]/g, "")
-      .replace(/\s+/g, "-")
-      .replace(/-+/g, "-")
+      .replaceAll(/[^\w\s-]/g, "")
+      .replaceAll(/\s+/g, "-")
+      .replaceAll(/-+/g, "-")
       .substring(0, 50);
   }
 
@@ -83,6 +84,10 @@ export class CryptoUtil {
       const recoveredAddress = ethers.verifyMessage(message, signature);
       return recoveredAddress.toLowerCase() === expectedAddress.toLowerCase();
     } catch (error) {
+      logger.debug("Signature verification failed", {
+        expectedAddress,
+        error: error instanceof Error ? error.message : String(error),
+      });
       return false;
     }
   }

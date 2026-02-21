@@ -1,8 +1,9 @@
 import cors from "cors";
-import { ENV } from "../config/environment";
+import { ENV } from "../config/environment.js";
 
 const allowedOrigins = new Set([
   ENV.FRONTEND_URL,
+  ENV.FRONTEND_URL_DEV,
   "http://localhost:3000",
   "http://localhost:3001",
 ]);

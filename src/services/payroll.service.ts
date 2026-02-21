@@ -1,13 +1,13 @@
-import { Organization, IOrganization } from "../models/Organization.model";
-import { BatchPayroll, IBatchPayroll } from "../models/BatchPayroll.model";
-import { User } from "../models/User.model";
-import { CryptoUtil } from "../utils/crypto.util";
+import { Organization, IOrganization } from "../models/Organization.model.js";
+import { BatchPayroll, IBatchPayroll } from "../models/BatchPayroll.model.js";
+import { User } from "../models/User.model.js";
+import { CryptoUtil } from "../utils/crypto.util.js";
 import mongoose from "mongoose";
 import {
   CreateOrganizationInput,
   CreateBatchInput,
   AddEmployeeData,
-} from "../types/payroll.types";
+} from "../types/payroll.types.js";
 
 export class PayrollService {
   /**
@@ -114,8 +114,7 @@ export class PayrollService {
 
     // Check if user is already in this organization
     if (
-      user.organizationId &&
-      user.organizationId.toString() === organizationId
+      user.organizationId?.toString() === organizationId
     ) {
       throw new Error(`User is already an employee of this organization`);
     }

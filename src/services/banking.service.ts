@@ -1,9 +1,9 @@
 import { ethers } from "ethers";
-import { Transaction, ITransaction } from "../models/Transaction.model";
-import { User } from "../models/User.model";
-import { TransactionData, TransactionFilter } from "../types/transaction.types";
-import { cNGNContract } from "../config/blockchain";
-import crypto from "crypto";
+import { Transaction, ITransaction } from "../models/Transaction.model.js";
+import { User } from "../models/User.model.js";
+import { TransactionData, TransactionFilter } from "../types/transaction.types.js";
+import { cNGNContract } from "../config/blockchain.js";
+import crypto from "node:crypto";
 
 export class BankingService {
   /**

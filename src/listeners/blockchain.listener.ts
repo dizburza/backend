@@ -1,13 +1,83 @@
 import { ethers } from "ethers";
-import { cNGNContract } from "../config/blockchain";
-import { BankingService } from "../services/banking.service";
-import { User } from "../models/User.model";
-import { Organization } from "../models/Organization.model";
-import logger from "../utils/logger.util";
+import { cNGNContract } from "../config/blockchain.js";
+import { BankingService } from "../services/banking.service.js";
+import { User } from "../models/User.model.js";
+import { Organization } from "../models/Organization.model.js";
+import logger from "../utils/logger.util.js";
 import mongoose from "mongoose";
 
 export class BlockchainListener {
   private isListening: boolean = false;
+
+  private async getTxTypeAndOrganizationId(
+    fromAddress: string,
+    walletAddress: string
+  ): Promise<{
+    type: "send" | "receive" | "payroll";
+    organizationId?: string;
+  }> {
+    const organization = await Organization.findOne({
+      contractAddress: fromAddress.toLowerCase(),
+    });
+
+    if (organization) {
+      return {
+        type: "payroll",
+        organizationId: (organization._id as mongoose.Types.ObjectId).toString(),
+      };
+    }
+
+    if (fromAddress.toLowerCase() === walletAddress.toLowerCase()) {
+      return { type: "send" };
+    }
+
+    return { type: "receive" };
+  }
+
+  private async syncSingleUserHistoryEvent(
+    event: any,
+    walletAddress: string
+  ): Promise<"synced" | "duplicate" | "ignored"> {
+    try {
+      const parsedLog = cNGNContract.interface.parseLog({
+        topics: [...event.topics],
+        data: event.data,
+      });
+
+      if (!parsedLog) return "ignored";
+
+      const from = parsedLog.args[0];
+      const to = parsedLog.args[1];
+      const value = parsedLog.args[2];
+
+      const tx = await event.getTransaction();
+      const receipt = await event.getTransactionReceipt();
+
+      const { type, organizationId } = await this.getTxTypeAndOrganizationId(
+        from,
+        walletAddress
+      );
+
+      await BankingService.recordTransaction({
+        txHash: tx.hash,
+        type,
+        fromAddress: from,
+        toAddress: to,
+        amount: value.toString(),
+        blockNumber: receipt.blockNumber,
+        organizationId,
+      });
+
+      return "synced";
+    } catch (error: any) {
+      if (error?.message?.includes("duplicate")) {
+        return "duplicate";
+      }
+
+      logger.error(`❌ Error syncing transaction:`, error);
+      return "ignored";
+    }
+  }
 
   async start() {
     if (this.isListening) {
@@ -35,7 +105,7 @@ export class BlockchainListener {
           const tx = await event.getTransaction();
           const receipt = await event.getTransactionReceipt();
 
-          let type: "send" | "receive" | "payroll" = "receive";
+          let type: "send" | "receive" | "payroll";
 
           const isFromOrganization = await Organization.findOne({
             contractAddress: from.toLowerCase(),
@@ -111,54 +181,15 @@ export class BlockchainListener {
       let skipped = 0;
 
       for (const event of allEvents) {
-        try {
-          const parsedLog = cNGNContract.interface.parseLog({
-            topics: [...event.topics],
-            data: event.data,
-          });
+        const result = await this.syncSingleUserHistoryEvent(
+          event,
+          walletAddress
+        );
 
-          if (!parsedLog) continue;
-
-          const from = parsedLog.args[0];
-          const to = parsedLog.args[1];
-          const value = parsedLog.args[2];
-
-          const tx = await event.getTransaction();
-          const receipt = await event.getTransactionReceipt();
-
-          let type: "send" | "receive" | "payroll" = "receive";
-
-          const isFromOrganization = await Organization.findOne({
-            contractAddress: from.toLowerCase(),
-          });
-
-          if (isFromOrganization) {
-            type = "payroll";
-          } else if (from.toLowerCase() === walletAddress.toLowerCase()) {
-            type = "send";
-          } else {
-            type = "receive";
-          }
-
-          await BankingService.recordTransaction({
-            txHash: tx.hash,
-            type,
-            fromAddress: from,
-            toAddress: to,
-            amount: value.toString(),
-            blockNumber: receipt.blockNumber,
-            organizationId: isFromOrganization
-              ? (isFromOrganization._id as mongoose.Types.ObjectId).toString()
-              : undefined,
-          });
-
+        if (result === "synced") {
           synced++;
-        } catch (error: any) {
-          if (error.message && error.message.includes("duplicate")) {
-            skipped++;
-          } else {
-            logger.error(`❌ Error syncing transaction:`, error);
-          }
+        } else if (result === "duplicate") {
+          skipped++;
         }
       }
 
@@ -231,7 +262,7 @@ export class BlockchainListener {
 
           synced++;
         } catch (error: any) {
-          if (error.message && error.message.includes("duplicate")) {
+          if (error.message?.includes("duplicate")) {
             skipped++;
           } else {
             logger.error(`❌ Error syncing payroll transaction:`, error);

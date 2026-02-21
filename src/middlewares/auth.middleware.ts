@@ -1,9 +1,9 @@
 import { Request, Response, NextFunction } from "express";
 import jwt from "jsonwebtoken";
-import { ENV } from "../config/environment";
-import { User } from "../models/User.model";
-import { ApiResponse } from "../utils/response.util";
-import logger from "../utils/logger.util";
+import { ENV } from "../config/environment.js";
+import { User } from "../models/User.model.js";
+import { ApiResponse } from "../utils/response.util.js";
+import logger from "../utils/logger.util.js";
 
 export interface JWTPayload {
   userId: string;

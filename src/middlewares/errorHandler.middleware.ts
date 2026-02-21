@@ -1,6 +1,6 @@
 import { Request, Response, NextFunction } from "express";
-import logger from "../utils/logger.util";
-import { ENV } from "../config/environment";
+import logger from "../utils/logger.util.js";
+import { ENV } from "../config/environment.js";
 
 export class AppError extends Error {
   statusCode: number;

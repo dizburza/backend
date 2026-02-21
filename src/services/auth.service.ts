@@ -1,10 +1,10 @@
 import jwt, { SignOptions } from "jsonwebtoken";
-import { User, IUser } from "../models/User.model";
-import { Organization } from "../models/Organization.model";
-import { ENV } from "../config/environment";
-import { CryptoUtil } from "../utils/crypto.util";
+import { User, IUser } from "../models/User.model.js";
+import { Organization } from "../models/Organization.model.js";
+import { ENV } from "../config/environment.js";
+import { CryptoUtil } from "../utils/crypto.util.js";
 import crypto from "node:crypto";
-import { UserRegistrationData, LoginData } from "../types/user.types";
+import { UserRegistrationData, LoginData } from "../types/user.types.js";
 
 export class AuthService {
   /**

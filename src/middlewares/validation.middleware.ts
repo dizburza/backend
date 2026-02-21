@@ -6,8 +6,8 @@ import {
   param,
   query,
 } from "express-validator";
-import { ApiResponse } from "../utils/response.util";
-import { ValidationUtil } from "../utils/validation.util";
+import { ApiResponse } from "../utils/response.util.js";
+import { ValidationUtil } from "../utils/validation.util.js";
 
 export const validate = (validations: ValidationChain[]) => {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {

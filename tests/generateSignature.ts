@@ -52,9 +52,11 @@ async function generateSignature(userAddress: string) {
 
 // Run
 const userAddress = process.env.USER_ADDRESS!;
-generateSignature(userAddress)
-  .then((result) => {
-    console.log("\n📋 Use these for login:");
-    console.log(JSON.stringify(result, null, 2));
-  })
-  .catch(console.error);
+
+try {
+  const result = await generateSignature(userAddress);
+  console.log("\n📋 Use these for login:");
+  console.log(JSON.stringify(result, null, 2));
+} catch (error) {
+  console.error(error);
+}
