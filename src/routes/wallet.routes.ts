@@ -1,9 +1,9 @@
 import { Router } from "express";
-import { WalletController } from "../controllers/wallet.controller";
-import { authenticate, optionalAuth } from "../middlewares/auth.middleware";
-import { validate } from "../middlewares/validation.middleware";
+import { WalletController } from "../controllers/wallet.controller.js";
+import { authenticate, optionalAuth } from "../middlewares/auth.middleware.js";
+import { validate } from "../middlewares/validation.middleware.js";
 import { param } from "express-validator";
-import { ValidationUtil } from "../utils/validation.util";
+import { ValidationUtil } from "../utils/validation.util.js";
 
 const router = Router();
 

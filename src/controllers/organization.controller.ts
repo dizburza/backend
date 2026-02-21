@@ -1,15 +1,15 @@
 import { Request, Response } from "express";
-import { PayrollService } from "../services/payroll.service";
-import { Organization } from "../models/Organization.model";
-import { ApiResponse } from "../utils/response.util";
-import { asyncHandler } from "../middlewares/errorHandler.middleware";
+import { PayrollService } from "../services/payroll.service.js";
+import { Organization } from "../models/Organization.model.js";
+import { ApiResponse } from "../utils/response.util.js";
+import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
 
 export class OrganizationController {
   /**
    * POST /api/organizations
    * Record organization creation after frontend calls smart contract
    */
-  static createOrganization = asyncHandler(
+  static readonly createOrganization = asyncHandler(
     async (req: Request, res: Response) => {
       const {
         name,
@@ -47,7 +47,7 @@ export class OrganizationController {
    * GET /api/organizations/signer/:address
    * Get organization where address is a signer
    */
-  static getSignerOrganization = asyncHandler(
+  static readonly getSignerOrganization = asyncHandler(
     async (req: Request, res: Response) => {
       const { address } = req.params;
 
@@ -68,7 +68,7 @@ export class OrganizationController {
    * GET /api/organizations/slug/:slug
    * Get organization by slug (for organization dashboard)
    */
-  static getBySlug = asyncHandler(async (req: Request, res: Response) => {
+  static readonly getBySlug = asyncHandler(async (req: Request, res: Response) => {
     const { slug } = req.params;
 
     const organization = await PayrollService.getOrganizationBySlug(slug);
@@ -85,7 +85,7 @@ export class OrganizationController {
    * POST /api/organizations/:id/employees
    * Add employee to organization
    */
-  static addEmployee = asyncHandler(async (req: Request, res: Response) => {
+  static readonly addEmployee = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const { username, jobRole, salary, department, employeeId } = req.body;
 
@@ -104,7 +104,7 @@ export class OrganizationController {
    * GET /api/organizations/:id/employees
    * Get all employees in organization
    */
-  static getEmployees = asyncHandler(async (req: Request, res: Response) => {
+  static readonly getEmployees = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const result = await PayrollService.getOrganizationEmployees(id);
@@ -116,7 +116,7 @@ export class OrganizationController {
    * PATCH /api/organizations/:id/employees/:username
    * Update employee details
    */
-  static updateEmployee = asyncHandler(async (req: Request, res: Response) => {
+  static readonly updateEmployee = asyncHandler(async (req: Request, res: Response) => {
     const { id, username } = req.params;
     const { jobRole, salary, department, employeeId } = req.body;
 
@@ -134,7 +134,7 @@ export class OrganizationController {
    * DELETE /api/organizations/:id/employees/:username
    * Remove employee from organization
    */
-  static removeEmployee = asyncHandler(async (req: Request, res: Response) => {
+  static readonly removeEmployee = asyncHandler(async (req: Request, res: Response) => {
     const { id, username } = req.params;
 
     const user = await PayrollService.removeEmployee(id, username);
@@ -146,7 +146,7 @@ export class OrganizationController {
    * GET /api/organizations
    * Get all organizations (for exploration/discovery)
    */
-  static getAllOrganizations = asyncHandler(
+  static readonly getAllOrganizations = asyncHandler(
     async (_req: Request, res: Response) => {
       const organizations = await PayrollService.getAllOrganizations();
       ApiResponse.success(res, organizations);
@@ -157,7 +157,7 @@ export class OrganizationController {
    * GET /api/organizations/:id
    * Get organization by ID
    */
-  static getById = asyncHandler(async (req: Request, res: Response) => {
+  static readonly getById = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
 
     const organization = await Organization.findById(id).populate(
@@ -177,7 +177,7 @@ export class OrganizationController {
    * GET /api/organizations/creator/:address
    * Get organization created by address
    */
-  static getByCreator = asyncHandler(async (req: Request, res: Response) => {
+  static readonly getByCreator = asyncHandler(async (req: Request, res: Response) => {
     const { address } = req.params;
 
     const organization = await Organization.findOne({

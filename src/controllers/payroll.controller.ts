@@ -1,14 +1,14 @@
 import { Request, Response } from "express";
-import { PayrollService } from "../services/payroll.service";
-import { ApiResponse } from "../utils/response.util";
-import { asyncHandler } from "../middlewares/errorHandler.middleware";
+import { PayrollService } from "../services/payroll.service.js";
+import { ApiResponse } from "../utils/response.util.js";
+import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
 
 export class PayrollController {
   /**
    * POST /api/payroll/batches
    * Record batch creation after frontend calls smart contract
    */
-  static recordBatchCreation = asyncHandler(
+  static readonly recordBatchCreation = asyncHandler(
     async (req: Request, res: Response) => {
       const {
         batchName,
@@ -34,7 +34,7 @@ export class PayrollController {
    * POST /api/payroll/batches/:batchName/approve
    * Record approval after frontend calls smart contract
    */
-  static recordBatchApproval = asyncHandler(
+  static readonly recordBatchApproval = asyncHandler(
     async (req: Request, res: Response) => {
       const { batchName } = req.params;
       const { signerAddress, signerName } = req.body;
@@ -53,7 +53,7 @@ export class PayrollController {
    * POST /api/payroll/batches/:batchName/execute
    * Record execution after frontend calls smart contract
    */
-  static recordBatchExecution = asyncHandler(
+  static readonly recordBatchExecution = asyncHandler(
     async (req: Request, res: Response) => {
       const { batchName } = req.params;
       const { executorAddress, txHash } = req.body;
@@ -72,7 +72,7 @@ export class PayrollController {
    * GET /api/payroll/organizations/:id/batches
    * Get batches from database
    */
-  static getBatches = asyncHandler(async (req: Request, res: Response) => {
+  static readonly getBatches = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
     const { status } = req.query;
 
@@ -88,7 +88,7 @@ export class PayrollController {
    * GET /api/payroll/batches/:batchName
    * Get single batch details
    */
-  static getBatchByName = asyncHandler(async (req: Request, res: Response) => {
+  static readonly getBatchByName = asyncHandler(async (req: Request, res: Response) => {
     const { batchName } = req.params;
 
     const batch = await PayrollService.getBatchByName(batchName);
@@ -105,7 +105,7 @@ export class PayrollController {
    * POST /api/payroll/batches/:batchName/cancel
    * Record cancellation after frontend calls smart contract
    */
-  static recordBatchCancellation = asyncHandler(
+  static readonly recordBatchCancellation = asyncHandler(
     async (req: Request, res: Response) => {
       const { batchName } = req.params;
 

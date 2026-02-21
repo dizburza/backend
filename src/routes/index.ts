@@ -1,10 +1,10 @@
 import { Router } from "express";
-import authRoutes from "./auth.routes";
-import walletRoutes from "./wallet.routes";
-import transactionRoutes from "./transaction.routes";
-import organizationRoutes from "./organization.routes";
-import payrollRoutes from "./payroll.routes";
-import userRoutes from "./user.routes";
+import authRoutes from "./auth.routes.js";
+import walletRoutes from "./wallet.routes.js";
+import transactionRoutes from "./transaction.routes.js";
+import organizationRoutes from "./organization.routes.js";
+import payrollRoutes from "./payroll.routes.js";
+import userRoutes from "./user.routes.js";
 
 const router = Router();
 

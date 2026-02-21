@@ -1,13 +1,13 @@
 import { Router } from "express";
-import { TransactionController } from "../controllers/transaction.controller";
-import { authenticate, optionalAuth } from "../middlewares/auth.middleware";
+import { TransactionController } from "../controllers/transaction.controller.js";
+import { authenticate, optionalAuth } from "../middlewares/auth.middleware.js";
 import {
   validate,
   ValidationRules,
-} from "../middlewares/validation.middleware";
-import { transactionLimiter } from "../middlewares/rateLimiter.middleware";
+} from "../middlewares/validation.middleware.js";
+import { transactionLimiter } from "../middlewares/rateLimiter.middleware.js";
 import { param } from "express-validator";
-import { ValidationUtil } from "../utils/validation.util";
+import { ValidationUtil } from "../utils/validation.util.js";
 
 const router = Router();
 

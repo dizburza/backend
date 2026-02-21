@@ -1,20 +1,20 @@
 import { Request, Response } from "express";
-import { BankingService } from "../services/banking.service";
-import { ApiResponse } from "../utils/response.util";
-import { asyncHandler } from "../middlewares/errorHandler.middleware";
+import { BankingService } from "../services/banking.service.js";
+import { ApiResponse } from "../utils/response.util.js";
+import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
 
 export class TransactionController {
   /**
    * GET /api/transactions/:address
    */
-  static getHistory = asyncHandler(async (req: Request, res: Response) => {
+  static readonly getHistory = asyncHandler(async (req: Request, res: Response) => {
     const { address } = req.params;
     const { page, limit, type, category, startDate, endDate, status } =
       req.query;
 
     const filters: any = {
-      page: page ? parseInt(page as string) : 1,
-      limit: limit ? parseInt(limit as string) : 50,
+      page: page ? Number.parseInt(page as string) : 1,
+      limit: limit ? Number.parseInt(limit as string) : 50,
     };
 
     if (type) filters.type = type;
@@ -31,7 +31,7 @@ export class TransactionController {
   /**
    * POST /api/transactions/record
    */
-  static recordTransaction = asyncHandler(
+  static readonly recordTransaction = asyncHandler(
     async (req: Request, res: Response) => {
       const {
         txHash,

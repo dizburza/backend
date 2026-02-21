@@ -1,10 +1,10 @@
 import { Request, Response } from "express";
-import { User } from "../models/User.model";
-import { ApiResponse } from "../utils/response.util";
-import { asyncHandler } from "../middlewares/errorHandler.middleware";
+import { User } from "../models/User.model.js";
+import { ApiResponse } from "../utils/response.util.js";
+import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
 
 export class UserController {
-  static searchByUsername = asyncHandler(
+  static readonly searchByUsername = asyncHandler(
     async (req: Request, res: Response) => {
       const { username } = req.params;
 
@@ -44,17 +44,20 @@ export class UserController {
     }
   );
 
-  static suggestUsernames = asyncHandler(
+  static readonly suggestUsernames = asyncHandler(
     async (req: Request, res: Response) => {
       const { query } = req.query;
 
-      if (!query || (query as string).length < 2) {
+      const queryString = typeof query === "string" ? query : "";
+      const escapedQuery = queryString.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+
+      if (!escapedQuery || queryString.length < 2) {
         ApiResponse.success(res, { suggestions: [] });
         return;
       }
 
       const users = await User.find({
-        username: { $regex: `^${query}`, $options: "i" },
+        username: { $regex: new RegExp(`^${escapedQuery}`, "i") },
         isActive: true,
       })
         .select("username fullName avatar")
@@ -70,7 +73,7 @@ export class UserController {
     }
   );
 
-  static batchLookup = asyncHandler(async (req: Request, res: Response) => {
+  static readonly batchLookup = asyncHandler(async (req: Request, res: Response) => {
     const { usernames } = req.body;
 
     if (!Array.isArray(usernames) || usernames.length === 0) {

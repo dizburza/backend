@@ -1,13 +1,13 @@
 import { Request, Response } from "express";
-import { AuthService } from "../services/auth.service";
-import { ApiResponse } from "../utils/response.util";
-import { asyncHandler } from "../middlewares/errorHandler.middleware";
+import { AuthService } from "../services/auth.service.js";
+import { ApiResponse } from "../utils/response.util.js";
+import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
 
 export class AuthController {
   /**
    * POST /api/auth/register
    */
-  static register = asyncHandler(async (req: Request, res: Response) => {
+  static readonly register = asyncHandler(async (req: Request, res: Response) => {
     const {
       walletAddress,
       username,
@@ -38,7 +38,7 @@ export class AuthController {
   /**
    * POST /api/auth/login
    */
-  static login = asyncHandler(async (req: Request, res: Response) => {
+  static readonly login = asyncHandler(async (req: Request, res: Response) => {
     const { walletAddress, signature, message } = req.body;
 
     const result = await AuthService.login({
@@ -53,7 +53,7 @@ export class AuthController {
   /**
    * GET /api/auth/check/:address
    */
-  static checkStatus = asyncHandler(async (req: Request, res: Response) => {
+  static readonly checkStatus = asyncHandler(async (req: Request, res: Response) => {
     const { address } = req.params;
 
     const result = await AuthService.checkUserStatus(address);
@@ -64,7 +64,7 @@ export class AuthController {
   /**
    * GET /api/auth/message/:address
    */
-  static getAuthMessage = asyncHandler(async (req: Request, res: Response) => {
+  static readonly getAuthMessage = asyncHandler(async (req: Request, res: Response) => {
     const { address } = req.params;
 
     const message = await AuthService.getAuthMessage(address);
@@ -75,7 +75,7 @@ export class AuthController {
   /**
    * GET /api/auth/me
    */
-  static getProfile = asyncHandler(async (req: Request, res: Response) => {
+  static readonly getProfile = asyncHandler(async (req: Request, res: Response) => {
     ApiResponse.success(res, { user: req.user });
   });
 }

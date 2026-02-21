@@ -1,11 +1,11 @@
 import { Router } from "express";
-import { OrganizationController } from "../controllers/organization.controller";
-import { authenticate, requireRole } from "../middlewares/auth.middleware";
+import { OrganizationController } from "../controllers/organization.controller.js";
+import { authenticate, requireRole } from "../middlewares/auth.middleware.js";
 import {
   validate,
   ValidationRules,
-} from "../middlewares/validation.middleware";
-import { ValidationUtil } from "../utils/validation.util";
+} from "../middlewares/validation.middleware.js";
+import { ValidationUtil } from "../utils/validation.util.js";
 import { param } from "express-validator";
 
 const router = Router();

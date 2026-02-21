@@ -1,13 +1,13 @@
 import { Request, Response } from "express";
-import { BankingService } from "../services/banking.service";
-import { ApiResponse } from "../utils/response.util";
-import { asyncHandler } from "../middlewares/errorHandler.middleware";
+import { BankingService } from "../services/banking.service.js";
+import { ApiResponse } from "../utils/response.util.js";
+import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
 
 export class WalletController {
   /**
    * GET /api/wallet/:address/balance
    */
-  static getBalance = asyncHandler(async (req: Request, res: Response) => {
+  static readonly getBalance = asyncHandler(async (req: Request, res: Response) => {
     const { address } = req.params;
 
     const balance = await BankingService.getBalance(address);
@@ -22,7 +22,7 @@ export class WalletController {
   /**
    * GET /api/wallet/:address/summary
    */
-  static getSummary = asyncHandler(async (req: Request, res: Response) => {
+  static readonly getSummary = asyncHandler(async (req: Request, res: Response) => {
     const { address } = req.params;
 
     const summary = await BankingService.getWalletSummary(address);
@@ -33,7 +33,7 @@ export class WalletController {
   /**
    * POST /api/wallet/:address/sync
    */
-  static syncHistory = asyncHandler(async (req: Request, res: Response) => {
+  static readonly syncHistory = asyncHandler(async (req: Request, res: Response) => {
     const { address } = req.params;
     const { fromBlock } = req.body;
 

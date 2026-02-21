@@ -1,10 +1,10 @@
 import { Router } from "express";
-import { PayrollController } from "../controllers/payroll.controller";
-import { authenticate, requireRole } from "../middlewares/auth.middleware";
+import { PayrollController } from "../controllers/payroll.controller.js";
+import { authenticate, requireRole } from "../middlewares/auth.middleware.js";
 import {
   validate,
   ValidationRules,
-} from "../middlewares/validation.middleware";
+} from "../middlewares/validation.middleware.js";
 import { param } from "express-validator";
 
 const router = Router();
