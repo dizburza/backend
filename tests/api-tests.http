@@ -1,7 +1,7 @@
-@baseUrl = http://localhost:5000/api
+@baseUrl = http://localhost:5050/api
 
-@signerAddress = 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1
-@employeeAddress = 0x9876543210fedcba9876543210fedcba98765432
+@signerAddress = 0xbf4EE65FE67C291DfC34ffe2455ecA9d97DF9148
+@employeeAddress = 0xb7B943fFbA78e33589971e630AD6EB544252D88C
 
 # Set these after running the register/login requests
 @token = YOUR_TOKEN_HERE
