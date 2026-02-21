@@ -1,17 +1,17 @@
 import express from "express";
-import { corsMiddleware } from "./middlewares/cors.middleware";
+import { corsMiddleware } from "./middlewares/cors.middleware.js";
 import {
   helmetMiddleware,
   hppMiddleware,
-} from "./middlewares/security.middleware";
-import { sanitizeMiddleware } from "./middlewares/sanitize.middleware";
-import { requestLogger } from "./middlewares/logger.middleware";
-import { generalLimiter } from "./middlewares/rateLimiter.middleware";
+} from "./middlewares/security.middleware.js";
+import { sanitizeMiddleware } from "./middlewares/sanitize.middleware.js";
+import { requestLogger } from "./middlewares/logger.middleware.js";
+import { generalLimiter } from "./middlewares/rateLimiter.middleware.js";
 import {
   errorHandler,
   notFoundHandler,
-} from "./middlewares/errorHandler.middleware";
-import routes from "./routes";
+} from "./middlewares/errorHandler.middleware.js";
+import routes from "./routes/index.js";
 
 const app = express();
 

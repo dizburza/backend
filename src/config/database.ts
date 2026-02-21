@@ -1,5 +1,5 @@
 import mongoose from "mongoose";
-import { ENV } from "./environment";
+import { ENV } from "./environment.js";
 
 let isConnected = false;
 

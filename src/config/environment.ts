@@ -28,6 +28,7 @@ export const ENV = {
   // API
   API_URL: process.env.API_URL || "http://localhost:5000",
   FRONTEND_URL: process.env.FRONTEND_URL || "http://localhost:3000",
+  FRONTEND_URL_DEV: process.env.FRONTEND_URL_DEV,
 
   // Rate Limiting
   RATE_LIMIT_WINDOW: Number.parseInt(process.env.RATE_LIMIT_WINDOW || "900000", 10), // 15 mins
