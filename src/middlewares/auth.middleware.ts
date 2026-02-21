@@ -83,7 +83,15 @@ export const optionalAuth = async (
 
     next();
   } catch (error) {
-    // Ignore errors for optional auth
-    next();
+    if (
+      error instanceof jwt.JsonWebTokenError ||
+      error instanceof jwt.TokenExpiredError ||
+      error instanceof jwt.NotBeforeError
+    ) {
+      next();
+      return;
+    }
+
+    next(error);
   }
 };

@@ -1,6 +1,13 @@
 import { Request, Response, NextFunction } from "express";
-import { validationResult, ValidationChain } from "express-validator";
+import {
+  validationResult,
+  ValidationChain,
+  body,
+  param,
+  query,
+} from "express-validator";
 import { ApiResponse } from "../utils/response.util";
+import { ValidationUtil } from "../utils/validation.util";
 
 export const validate = (validations: ValidationChain[]) => {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -15,10 +22,6 @@ export const validate = (validations: ValidationChain[]) => {
     next();
   };
 };
-
-// Common validation rules
-import { body, param, query } from "express-validator";
-import { ValidationUtil } from "../utils/validation.util";
 
 export const ValidationRules = {
   // Address validation
@@ -36,7 +39,7 @@ export const ValidationRules = {
       .optional({ values: "falsy" })
       .isLength({ min: 3, max: 30 })
       .withMessage("Username must be 3-30 characters")
-      .matches(/^[a-zA-Z0-9_]+$/)
+      .matches(/^\w+$/)
       .withMessage(
         "Username can only contain letters, numbers, and underscores"
       ),

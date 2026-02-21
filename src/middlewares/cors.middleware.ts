@@ -1,11 +1,11 @@
 import cors from "cors";
 import { ENV } from "../config/environment";
 
-const allowedOrigins = [
+const allowedOrigins = new Set([
   ENV.FRONTEND_URL,
   "http://localhost:3000",
   "http://localhost:3001",
-];
+]);
 
 export const corsOptions = {
   origin: (origin: string | undefined, callback: Function) => {
@@ -13,7 +13,7 @@ export const corsOptions = {
     if (!origin) return callback(null, true);
 
     if (
-      allowedOrigins.indexOf(origin) !== -1 ||
+      allowedOrigins.has(origin) ||
       ENV.NODE_ENV === "development"
     ) {
       callback(null, true);
