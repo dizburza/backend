@@ -131,12 +131,31 @@ export class AuthService {
 
     let redirectTo = "/wallet";
     let organization = null;
+    let effectiveRole: IUser["role"] = user.role || "employee";
 
     if (user.organizationId && user.organizationSlug) {
       organization = await Organization.findById(user.organizationId);
       redirectTo = `/enterprise/${user.organizationSlug}`;
+
+      const normalizedWallet = user.walletAddress.toLowerCase();
+      const creator = organization?.creatorAddress?.toLowerCase();
+      const isCreator = Boolean(creator && normalizedWallet === creator);
+      const isActiveSigner = Boolean(
+        organization?.signers?.some(
+          (signer: { address?: string; isActive?: boolean }) =>
+            Boolean(signer?.isActive) &&
+            (signer?.address || "").toLowerCase() === normalizedWallet
+        )
+      );
+
+      if (isCreator || isActiveSigner) {
+        effectiveRole = "signer";
+      } else {
+        effectiveRole = "employee";
+      }
     }
 
+    user.role = effectiveRole;
     return {
       isRegistered: true,
       user,
