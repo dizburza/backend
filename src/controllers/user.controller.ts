@@ -4,6 +4,32 @@ import { ApiResponse } from "../utils/response.util.js";
 import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
 
 export class UserController {
+  static readonly resolveUsername = asyncHandler(async (req: Request, res: Response) => {
+    const raw = (req.params.username || "").trim();
+    const cleaned = raw.startsWith("@") ? raw.slice(1) : raw;
+    const username = cleaned.toLowerCase();
+
+    if (!username || username.length < 3) {
+      ApiResponse.error(res, "Username must be at least 3 characters", 400);
+      return;
+    }
+
+    const user = await User.findOne({
+      username,
+      isActive: true,
+    }).select("username walletAddress");
+
+    if (!user) {
+      ApiResponse.error(res, "User not found", 404);
+      return;
+    }
+
+    ApiResponse.success(res, {
+      username: user.username,
+      walletAddress: user.walletAddress,
+    });
+  });
+
   static readonly searchByUsername = asyncHandler(
     async (req: Request, res: Response) => {
       const { username } = req.params;

@@ -32,10 +32,12 @@ export class AuthService {
         data.walletAddress
       );
 
+    username = username.toLowerCase();
+
     const usernameExists = await User.findOne({ username });
     if (usernameExists) {
       const randomSuffix = crypto.randomBytes(2).toString("hex");
-      username = `${username}_${randomSuffix}`;
+      username = `${username}_${randomSuffix}`.toLowerCase();
     }
 
     const user = await User.create({

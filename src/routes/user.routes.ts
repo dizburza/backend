@@ -6,6 +6,18 @@ import { param, query, body } from "express-validator";
 
 const router = Router();
 
+// Public resolve username -> wallet address
+router.get(
+  "/resolve/:username",
+  validate([
+    param("username")
+      .trim()
+      .isLength({ min: 3 })
+      .withMessage("Username must be at least 3 characters"),
+  ]),
+  UserController.resolveUsername
+);
+
 // Search user by username
 router.get(
   "/search/:username",
