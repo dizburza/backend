@@ -48,8 +48,15 @@ export class UserController {
       .map((a) => a.trim().toLowerCase())
       .filter(Boolean);
 
+    const escapeRegex = (value: string) => value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
+
+    const walletAddressMatchers = normalized.map((addr) => {
+      const escaped = escapeRegex(addr);
+      return { walletAddress: new RegExp(`^${escaped}$`, "i") };
+    });
+
     const users = await User.find({
-      walletAddress: { $in: normalized },
+      ...(walletAddressMatchers.length ? { $or: walletAddressMatchers } : {}),
       isActive: true,
     }).select("walletAddress username");
 
