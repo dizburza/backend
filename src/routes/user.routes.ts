@@ -18,6 +18,17 @@ router.get(
   UserController.resolveUsername
 );
 
+// Public resolve wallet addresses -> usernames
+router.post(
+  "/resolve-addresses",
+  validate([
+    body("addresses")
+      .isArray({ min: 1, max: 50 })
+      .withMessage("Addresses must be an array with 1-50 items"),
+  ]),
+  UserController.resolveAddresses
+);
+
 // Search user by username
 router.get(
   "/search/:username",

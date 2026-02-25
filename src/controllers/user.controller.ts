@@ -30,6 +30,44 @@ export class UserController {
     });
   });
 
+  static readonly resolveAddresses = asyncHandler(async (req: Request, res: Response) => {
+    const { addresses } = req.body as { addresses?: string[] };
+
+    if (!Array.isArray(addresses) || addresses.length === 0) {
+      ApiResponse.error(res, "Addresses array is required", 400);
+      return;
+    }
+
+    if (addresses.length > 50) {
+      ApiResponse.error(res, "Maximum 50 addresses allowed", 400);
+      return;
+    }
+
+    const normalized = addresses
+      .filter((a) => typeof a === "string")
+      .map((a) => a.trim().toLowerCase())
+      .filter(Boolean);
+
+    const users = await User.find({
+      walletAddress: { $in: normalized },
+      isActive: true,
+    }).select("walletAddress username");
+
+    const byAddress = new Map<string, string>();
+    for (const u of users) {
+      if (u.walletAddress && u.username) {
+        byAddress.set(u.walletAddress.toLowerCase(), u.username);
+      }
+    }
+
+    const results = normalized.map((addr) => ({
+      walletAddress: addr,
+      username: byAddress.get(addr) || null,
+    }));
+
+    ApiResponse.success(res, { results });
+  });
+
   static readonly searchByUsername = asyncHandler(
     async (req: Request, res: Response) => {
       const { username } = req.params;
