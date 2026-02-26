@@ -8,6 +8,9 @@ import mongoose from "mongoose";
 
 export class BlockchainListener {
   private isListening: boolean = false;
+  private restartAttempts: number = 0;
+  private readonly maxRestartAttempts: number = 5;
+  private readonly restartDelayMs: number = 5000;
 
   private async getTxTypeAndOrganizationId(
     fromAddress: string,
@@ -85,8 +88,19 @@ export class BlockchainListener {
       return;
     }
 
-    logger.info("🎧 Starting blockchain event listener...");
+    try {
+      logger.info("🎧 Starting blockchain event listener...");
+      await this.setupListener();
+      this.isListening = true;
+      this.restartAttempts = 0;
+      logger.info("✅ Blockchain listener started successfully");
+    } catch (error: any) {
+      logger.error("❌ Failed to start blockchain listener:", error);
+      await this.handleRestart();
+    }
+  }
 
+  private async setupListener() {
     cNGNContract.on("Transfer", async (from, to, value, event) => {
       try {
         logger.debug(
@@ -136,19 +150,44 @@ export class BlockchainListener {
 
           logger.info(`✅ Transaction recorded: ${tx.hash} (${type})`);
         }
-      } catch (error) {
-        logger.error("❌ Error processing transfer event:", error);
+      } catch (error: any) {
+        if (error?.message?.includes("filter not found")) {
+          logger.warn("⚠️ Filter expired, restarting listener...");
+          await this.handleRestart();
+        } else {
+          logger.error("❌ Error processing transfer event:", error);
+        }
       }
     });
+  }
 
-    this.isListening = true;
-    logger.info("✅ Blockchain listener started successfully");
+  private async handleRestart() {
+    if (this.restartAttempts >= this.maxRestartAttempts) {
+      logger.error(
+        `❌ Max restart attempts (${this.maxRestartAttempts}) reached. Stopping listener.`
+      );
+      this.stop();
+      return;
+    }
+
+    this.restartAttempts++;
+    const delay = this.restartDelayMs * this.restartAttempts;
+
+    logger.info(
+      `🔄 Restarting listener in ${delay}ms (attempt ${this.restartAttempts}/${this.maxRestartAttempts})...`
+    );
+
+    this.stop();
+
+    await new Promise((resolve) => setTimeout(resolve, delay));
+    await this.start();
   }
 
   stop() {
     if (this.isListening) {
       cNGNContract.removeAllListeners("Transfer");
       this.isListening = false;
+      this.restartAttempts = 0;
       logger.info("🛑 Blockchain listener stopped");
     }
   }
