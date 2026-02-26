@@ -225,9 +225,17 @@ export class OrganizationController {
       return;
     }
 
-    const results = await PayrollService.bulkAddEmployees(id, csvData);
-
-    ApiResponse.success(res, results, `Added ${results.added} employees. ${results.errors.length} errors.`);
+    try {
+      const results = await PayrollService.bulkAddEmployees(id, csvData);
+      ApiResponse.success(res, results, `Added ${results.added} employees. ${results.errors.length} errors.`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to process CSV";
+      if (message.includes("Missing required fields") || message.includes("Invalid CSV")) {
+        ApiResponse.error(res, message, 400);
+      } else {
+        throw error;
+      }
+    }
   });
 
   /**
