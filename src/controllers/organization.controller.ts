@@ -174,6 +174,36 @@ export class OrganizationController {
   });
 
   /**
+   * GET /api/organizations/:id/employees/template
+   * Download CSV template for employee bulk upload
+   */
+  static readonly downloadEmployeeTemplate = asyncHandler(async (_req: Request, res: Response) => {
+    const csvTemplate = PayrollService.generateEmployeeCSVTemplate();
+    
+    res.setHeader("Content-Type", "text/csv");
+    res.setHeader("Content-Disposition", 'attachment; filename="employee-template.csv"');
+    res.send(csvTemplate);
+  });
+
+  /**
+   * POST /api/organizations/:id/employees/bulk
+   * Bulk upload employees from CSV
+   */
+  static readonly bulkAddEmployees = asyncHandler(async (req: Request, res: Response) => {
+    const { id } = req.params;
+    const { csvData } = req.body;
+
+    if (!csvData || typeof csvData !== "string") {
+      ApiResponse.error(res, "CSV data is required", 400);
+      return;
+    }
+
+    const results = await PayrollService.bulkAddEmployees(id, csvData);
+
+    ApiResponse.success(res, results, `Added ${results.added} employees. ${results.errors.length} errors.`);
+  });
+
+  /**
    * GET /api/organizations/creator/:address
    * Get organization created by address
    */

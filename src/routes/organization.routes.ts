@@ -90,4 +90,21 @@ router.delete(
   OrganizationController.removeEmployee
 );
 
+// CSV Bulk Upload Routes
+router.get(
+  "/:id/employees/template",
+  authenticate,
+  requireRole("signer", "admin"),
+  validate([param("id").isMongoId().withMessage("Invalid organization ID")]),
+  OrganizationController.downloadEmployeeTemplate
+);
+
+router.post(
+  "/:id/employees/bulk",
+  authenticate,
+  requireRole("signer", "admin"),
+  validate([param("id").isMongoId().withMessage("Invalid organization ID")]),
+  OrganizationController.bulkAddEmployees
+);
+
 export default router;
