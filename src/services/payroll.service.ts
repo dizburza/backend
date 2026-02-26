@@ -9,7 +9,374 @@ import {
   AddEmployeeData,
 } from "../types/payroll.types.js";
 
+// Types for CSV bulk upload processing
+interface CsvRow {
+  walletAddress: string;
+  surname: string;
+  firstname: string;
+  jobRole: string;
+  salary: string;
+  department: string;
+  employeeId?: string;
+}
+
+interface BulkResults {
+  added: number;
+  errors: Array<{ row: number; walletAddress: string; error: string }>;
+  details: Array<{
+    walletAddress: string;
+    username: string;
+    status: "added" | "skipped" | "error";
+    isVerified: boolean;
+    message?: string;
+  }>;
+}
+
+type ProcessEmployeeRowContext = {
+  organizationId: string;
+  organizationSlug: string;
+  existingWallets: Set<string>;
+  existingUsernames: Set<string>;
+  generatedUsernames: Set<string>;
+  rowIndex: number;
+};
+
 export class PayrollService {
+  /**
+   * Generate CSV template for employee bulk upload
+   * Username is optional - will be auto-generated if not provided
+   */
+  static generateEmployeeCSVTemplate(): string {
+    const headers = [
+      "surname",
+      "firstname",
+      "walletAddress",
+      "jobRole",
+      "salary",
+      "department",
+      "employeeId"
+    ].join(",");
+    
+    const sampleRow = [
+      "Doe",
+      "John",
+      "0x1234567890abcdef1234567890abcdef12345678",
+      "Software Engineer",
+      "500000000000",
+      "Engineering",
+      "EMP001"
+    ].join(",");
+    
+    return `${headers}\n${sampleRow}`;
+  }
+
+  /**
+   * Bulk add employees from CSV data
+   * Uses walletAddress as primary lookup key
+   * Auto-generates username if user doesn't exist
+   * Marks new users as "unverified" status
+   */
+  static async bulkAddEmployees(
+    organizationId: string,
+    csvData: string
+  ): Promise<{
+    added: number;
+    errors: Array<{ row: number; walletAddress: string; error: string }>;
+    details: Array<{ walletAddress: string; username: string; status: "added" | "skipped" | "error"; isVerified: boolean; message?: string }>;
+  }> {
+    const { headers, lines } = this.parseCsvData(csvData);
+    this.validateCsvHeaders(headers);
+
+    const results: BulkResults = {
+      added: 0,
+      errors: [],
+      details: [],
+    };
+
+    const organization = await Organization.findById(organizationId);
+    if (!organization) {
+      throw new Error("Organization not found");
+    }
+
+    const { existingWallets, existingUsernames } = await this.getExistingEmployees(organizationId);
+    const generatedUsernames = new Set<string>();
+
+    for (let i = 1; i < lines.length; i++) {
+      const row = this.parseCsvRow(lines[i], headers);
+      if (!row) continue;
+
+      const { walletAddress } = row;
+
+      if (!walletAddress) {
+        this.recordError(results, i, "", "Wallet address is required");
+        continue;
+      }
+
+      if (existingWallets.has(walletAddress)) {
+        this.recordSkipped(results, walletAddress, "", "Employee with this wallet address already exists in organization");
+        continue;
+      }
+
+      await this.processEmployeeRow(
+        {
+          organizationId,
+          organizationSlug: organization.slug,
+          existingWallets,
+          existingUsernames,
+          generatedUsernames,
+          rowIndex: i,
+        },
+        row,
+        results
+      );
+    }
+
+    return results;
+  }
+
+  // Private helper methods for CSV processing
+
+  private static parseCsvData(csvData: string): { headers: string[]; lines: string[] } {
+    const lines = csvData.trim().split("\n");
+    if (lines.length < 2) {
+      throw new Error("CSV must have at least a header row and one data row");
+    }
+    const headers = lines[0].toLowerCase().split(",").map((h) => h.trim());
+    return { headers, lines };
+  }
+
+  private static validateCsvHeaders(headers: string[]): void {
+    const requiredFields = ["surname", "firstname", "walletaddress"];
+    const missingFields = requiredFields.filter((f) => !headers.includes(f));
+    if (missingFields.length > 0) {
+      throw new Error(`Missing required fields: ${missingFields.join(", ")}`);
+    }
+  }
+
+  private static parseCsvRow(line: string, headers: string[]): CsvRow | null {
+    const trimmed = line.trim();
+    if (!trimmed) return null;
+    const values = trimmed.split(",").map((v) => v.trim());
+    const rowData: Record<string, string> = {};
+    headers.forEach((header, index) => {
+      rowData[header] = values[index] || "";
+    });
+    return {
+      walletAddress: rowData.walletaddress?.toLowerCase() || "",
+      surname: rowData.surname,
+      firstname: rowData.firstname,
+      jobRole: rowData.jobrole || "Employee",
+      salary: rowData.salary || "0",
+      department: rowData.department || "General",
+      employeeId: rowData.employeeid,
+    };
+  }
+
+  private static generateUniqueUsername(
+    firstname: string,
+    surname: string,
+    existingUsernames: Set<string>,
+    generatedUsernames: Set<string>,
+    rowDataUsername?: string
+  ): string {
+    const baseUsername =
+      rowDataUsername ||
+      `${firstname.toLowerCase()}.${surname.toLowerCase()}`.replaceAll(/[^a-z0-9.]/g, "");
+    let username = baseUsername;
+    let counter = 1;
+    while (existingUsernames.has(username) || generatedUsernames.has(username)) {
+      username = `${baseUsername}${counter}`;
+      counter++;
+    }
+    return username;
+  }
+
+  private static recordError(
+    results: BulkResults,
+    row: number,
+    walletAddress: string,
+    errorMsg: string
+  ): void {
+    results.errors.push({ row, walletAddress, error: errorMsg });
+    results.details.push({
+      walletAddress,
+      username: "",
+      status: "error",
+      isVerified: false,
+      message: errorMsg,
+    });
+  }
+
+  private static recordSuccess(
+    results: BulkResults,
+    walletAddress: string,
+    username: string,
+    isNewUser: boolean
+  ): void {
+    results.added++;
+    results.details.push({
+      walletAddress,
+      username: username || "",
+      status: "added",
+      isVerified: !isNewUser,
+      message: isNewUser ? "New user created (unverified)" : "Existing user added",
+    });
+  }
+
+  private static recordSkipped(
+    results: BulkResults,
+    walletAddress: string,
+    username: string,
+    message: string
+  ): void {
+    results.details.push({
+      walletAddress,
+      username: username || "",
+      status: "skipped",
+      isVerified: true,
+      message,
+    });
+  }
+
+  private static async createNewUser(
+    organizationId: string,
+    organizationSlug: string,
+    row: CsvRow,
+    generatedUsername: string
+  ) {
+    return await User.create({
+      username: generatedUsername,
+      surname: row.surname,
+      firstname: row.firstname,
+      walletAddress: row.walletAddress,
+      fullName: `${row.firstname} ${row.surname}`,
+      role: "employee",
+      organizationId: new mongoose.Types.ObjectId(organizationId),
+      organizationSlug,
+      jobDetails: {
+        jobRole: row.jobRole,
+        salary: row.salary,
+        department: row.department,
+        employeeId: row.employeeId,
+        joinedAt: new Date(),
+      },
+    });
+  }
+
+  private static async updateExistingUser(
+    user: any,
+    organizationId: string,
+    organizationSlug: string,
+    row: CsvRow
+  ) {
+    user.organizationId = new mongoose.Types.ObjectId(organizationId);
+    user.organizationSlug = organizationSlug;
+    user.surname = row.surname || user.surname;
+    user.firstname = row.firstname || user.firstname;
+    user.fullName = `${row.firstname || user.firstname} ${row.surname || user.surname}`;
+    user.jobDetails = {
+      jobRole: row.jobRole,
+      salary: row.salary,
+      department: row.department,
+      employeeId: row.employeeId,
+      joinedAt: new Date(),
+    };
+    await user.save();
+  }
+
+  private static async addEmployeeToOrganization(
+    organizationId: string,
+    userId: mongoose.Types.ObjectId,
+    walletAddress: string,
+    existingWallets: Set<string>
+  ): Promise<void> {
+    await Organization.findByIdAndUpdate(organizationId, {
+      $addToSet: { employees: userId },
+    });
+    existingWallets.add(walletAddress);
+  }
+
+  private static async getExistingEmployees(organizationId: string): Promise<{
+    existingWallets: Set<string>;
+    existingUsernames: Set<string>;
+  }> {
+    const existingEmployees = await User.find({
+      organizationId: new mongoose.Types.ObjectId(organizationId),
+      isActive: true,
+    }).select("walletAddress username");
+
+    const existingWallets: Set<string> = new Set<string>(
+      existingEmployees
+        .map((e) => e.walletAddress?.toLowerCase())
+        .filter((v): v is string => Boolean(v))
+    );
+    const existingUsernames: Set<string> = new Set<string>(
+      existingEmployees
+        .map((e) => e.username?.toLowerCase())
+        .filter((v): v is string => Boolean(v))
+    );
+
+    return { existingWallets, existingUsernames };
+  }
+
+  private static async processEmployeeRow(
+    ctx: ProcessEmployeeRowContext,
+    row: CsvRow,
+    results: BulkResults
+  ): Promise<void> {
+    const {
+      organizationId,
+      organizationSlug,
+      existingWallets,
+      existingUsernames,
+      generatedUsernames,
+      rowIndex,
+    } = ctx;
+    const { walletAddress, surname, firstname } = row;
+
+    try {
+      let user = await User.findOne({ walletAddress, isActive: true });
+      let isNewUser = false;
+
+      if (user) {
+        if (user.organizationId && user.organizationId.toString() !== organizationId) {
+          throw new Error("User is already an employee of another organization");
+        }
+
+        if (user.organizationId?.toString() === organizationId) {
+          results.details.push({
+            walletAddress,
+            username: user.username || "",
+            status: "skipped",
+            isVerified: true,
+            message: "User already in this organization",
+          });
+          return;
+        }
+
+        await this.updateExistingUser(user, organizationId, organizationSlug, row);
+      } else {
+        isNewUser = true;
+        const generatedUsername = this.generateUniqueUsername(
+          firstname,
+          surname,
+          existingUsernames,
+          generatedUsernames
+        );
+        generatedUsernames.add(generatedUsername);
+        existingUsernames.add(generatedUsername);
+
+        user = await this.createNewUser(organizationId, organizationSlug, row, generatedUsername);
+      }
+
+      await this.addEmployeeToOrganization(organizationId, user._id, walletAddress, existingWallets);
+      this.recordSuccess(results, walletAddress, user.username || "", isNewUser);
+    } catch (err) {
+      const errorMsg = err instanceof Error ? err.message : "Unknown error";
+      this.recordError(results, rowIndex, walletAddress, errorMsg);
+    }
+  }
+
   /**
    * Create organization record in database
    * Frontend should call DizburzaFactory.createOrganization() first
@@ -221,6 +588,7 @@ export class PayrollService {
 
   /**
    * Get organization employees with full details
+   * Returns only regular employees (not signers)
    */
   static async getOrganizationEmployees(organizationId: string) {
     const organization = await Organization.findById(organizationId).populate({
@@ -233,13 +601,23 @@ export class PayrollService {
       throw new Error("Organization not found");
     }
 
+    // Get active signers for reference (not included in employee list)
+    const activeSigners = organization.signers.filter(s => s.isActive);
+
+    // Return only regular employees (signers are managed separately)
+    const employees = (organization.employees as any[]).map((e: any) => ({
+      ...e.toObject?.() || e,
+      isSigner: false,
+    }));
+
     return {
       organization: {
         name: organization.name,
         slug: organization.slug,
       },
-      employees: organization.employees,
-      totalEmployees: organization.employees.length,
+      employees,
+      totalEmployees: employees.length,
+      signersCount: activeSigners.length,
     };
   }
 
