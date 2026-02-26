@@ -774,8 +774,37 @@ export class PayrollService {
               _id: "$employeeUserId",
               action: { $first: "$action" },
               createdAt: { $first: "$createdAt" },
+              performedByUserId: { $first: "$performedByUserId" },
               performedByUsername: { $first: "$performedByUsername" },
               performedByWalletAddress: { $first: "$performedByWalletAddress" },
+            },
+          },
+          {
+            $lookup: {
+              from: "users",
+              localField: "performedByUserId",
+              foreignField: "_id",
+              as: "performedByUser",
+            },
+          },
+          {
+            $addFields: {
+              performedByUser: { $arrayElemAt: ["$performedByUser", 0] },
+            },
+          },
+          {
+            $addFields: {
+              performedByUsername: {
+                $ifNull: ["$performedByUsername", "$performedByUser.username"],
+              },
+              performedByWalletAddress: {
+                $ifNull: ["$performedByWalletAddress", "$performedByUser.walletAddress"],
+              },
+            },
+          },
+          {
+            $project: {
+              performedByUser: 0,
             },
           },
         ])
