@@ -43,6 +43,108 @@ type ProcessEmployeeRowContext = {
 };
 
 export class PayrollService {
+  private static toObjectId(id: unknown): mongoose.Types.ObjectId {
+    return new mongoose.Types.ObjectId(String(id));
+  }
+
+  private static getDisplayUsername(username?: string): string | undefined {
+    if (!username) return username;
+    return username.startsWith("unregistered") ? "unregistered" : username;
+  }
+
+  private static validateBulkRow(
+    row: CsvRow | null,
+    rowIndex: number,
+    results: BulkResults,
+    existingWallets: Set<string>
+  ): CsvRow | null {
+    if (!row) return null;
+
+    const { walletAddress } = row;
+
+    const missingFields: string[] = [];
+    if (!row.surname) missingFields.push("surname");
+    if (!row.firstname) missingFields.push("firstname");
+    if (!walletAddress) missingFields.push("walletAddress");
+    if (!row.salary) missingFields.push("salary");
+
+    if (missingFields.length > 0) {
+      this.recordError(
+        results,
+        rowIndex,
+        walletAddress || "",
+        `Missing required fields: ${missingFields.join(", ")}`
+      );
+      return null;
+    }
+
+    if (!walletAddress) {
+      this.recordError(results, rowIndex, "", "Wallet address is required");
+      return null;
+    }
+
+    if (existingWallets.has(walletAddress)) {
+      this.recordSkipped(
+        results,
+        walletAddress,
+        "",
+        "Employee with this wallet address already exists in organization"
+      );
+      return null;
+    }
+
+    return row;
+  }
+
+  private static async resolveEmployeeUser(
+    data: AddEmployeeData
+  ): Promise<{ user: any; isNewUser: boolean; source: "username" | "wallet" }> {
+    const rawUsername = (data.username || "").trim();
+    const rawWallet = (data.walletAddress || "").trim();
+
+    if (rawUsername) {
+      const existingByUsername = await User.findOne({
+        username: rawUsername.toLowerCase(),
+        isActive: true,
+      });
+
+      if (!existingByUsername) {
+        throw new Error(`User with username "${rawUsername}" not found`);
+      }
+
+      return { user: existingByUsername, isNewUser: false, source: "username" };
+    }
+
+    if (!rawWallet) {
+      throw new Error("Wallet address is required when username is not provided");
+    }
+    if (!data.firstname || !data.surname) {
+      throw new Error("Firstname and surname are required when username is not provided");
+    }
+
+    const existingByWallet = await User.findOne({
+      walletAddress: rawWallet.toLowerCase(),
+      isActive: true,
+    });
+
+    if (existingByWallet) {
+      return { user: existingByWallet, isNewUser: false, source: "wallet" };
+    }
+
+    const generatedUsername = await this.generateUnregisteredUsername(rawWallet);
+    const created = await User.create({
+      username: generatedUsername,
+      surname: data.surname,
+      firstname: data.firstname,
+      walletAddress: rawWallet.toLowerCase(),
+      fullName: `${data.firstname} ${data.surname}`,
+      role: "employee",
+      isActive: true,
+    });
+
+    return { user: created, isNewUser: true, source: "wallet" };
+  }
+
   /**
    * Generate CSV template for employee bulk upload
    * Username is optional - will be auto-generated if not provided
@@ -103,36 +205,8 @@ export class PayrollService {
     const generatedUsernames = new Set<string>();
 
     for (let i = 1; i < lines.length; i++) {
-      const row = this.parseCsvRow(lines[i], headers);
+      const row = this.validateBulkRow(this.parseCsvRow(lines[i], headers), i, results, existingWallets);
       if (!row) continue;
-
-      const { walletAddress } = row;
-
-      const missingFields: string[] = [];
-      if (!row.surname) missingFields.push("surname");
-      if (!row.firstname) missingFields.push("firstname");
-      if (!walletAddress) missingFields.push("walletAddress");
-      if (!row.salary) missingFields.push("salary");
-
-      if (missingFields.length > 0) {
-        this.recordError(
-          results,
-          i,
-          walletAddress || "",
-          `Missing required fields: ${missingFields.join(", ")}`
-        );
-        continue;
-      }
-
-      if (!walletAddress) {
-        this.recordError(results, i, "", "Wallet address is required");
-        continue;
-      }
-
-      if (existingWallets.has(walletAddress)) {
-        this.recordSkipped(results, walletAddress, "", "Employee with this wallet address already exists in organization");
-        continue;
-      }
 
       await this.processEmployeeRow(
         {
@@ -255,20 +329,18 @@ export class PayrollService {
     return (asBigInt * 1_000_000n).toString();
   }
 
-  private static async generateUnregisteredUsername(walletAddress: string): Promise<string> {
-    const normalized = walletAddress.trim().toLowerCase();
-    const walletSuffix = normalized.startsWith("0x")
-      ? normalized.slice(2, 10)
-      : normalized.slice(0, 8);
+  private static async generateUnregisteredUsername(_walletAddress: string): Promise<string> {
+    const base = "unregistered";
 
-    const base = `unregistered_${walletSuffix}`;
     let candidate = base;
     let counter = 1;
+
     // Ensure uniqueness across the entire User collection
     while (await User.exists({ username: candidate })) {
-      candidate = `${base}${counter}`;
       counter++;
+      candidate = `${base}${counter}`;
     }
+
     return candidate;
   }
 
@@ -300,7 +372,7 @@ export class PayrollService {
       walletAddress: row.walletAddress,
       fullName: `${row.firstname} ${row.surname}`,
       role: "employee",
-      organizationId: new mongoose.Types.ObjectId(organizationId),
+      organizationId: this.toObjectId(organizationId),
       organizationSlug,
       jobDetails: {
         jobRole: row.jobRole,
@@ -318,7 +390,7 @@ export class PayrollService {
     organizationSlug: string,
     row: CsvRow
   ) {
-    user.organizationId = new mongoose.Types.ObjectId(organizationId);
+    user.organizationId = this.toObjectId(organizationId);
     user.organizationSlug = organizationSlug;
     user.surname = row.surname || user.surname;
     user.firstname = row.firstname || user.firstname;
@@ -339,7 +411,7 @@ export class PayrollService {
     walletAddress: string,
     existingWallets: Set<string>
   ): Promise<void> {
-    await Organization.findByIdAndUpdate(organizationId, {
+    await Organization.findByIdAndUpdate(this.toObjectId(organizationId), {
       $addToSet: { employees: userId },
     });
     existingWallets.add(walletAddress);
@@ -350,7 +422,7 @@ export class PayrollService {
     existingUsernames: Set<string>;
   }> {
     const existingEmployees = await User.find({
-      organizationId: new mongoose.Types.ObjectId(organizationId),
+      organizationId: this.toObjectId(organizationId),
       isActive: true,
     }).select("walletAddress username");
 
@@ -521,48 +593,7 @@ export class PayrollService {
     data: AddEmployeeData,
     performedBy?: { userId?: string; username?: string; walletAddress?: string }
   ) {
-    const rawUsername = (data.username || "").trim();
-    const rawWallet = (data.walletAddress || "").trim();
-
-    let user = null as any;
-    let isNewUser = false;
-
-    if (rawUsername) {
-      user = await User.findOne({
-        username: rawUsername.toLowerCase(),
-        isActive: true,
-      });
-
-      if (!user) {
-        throw new Error(`User with username "${rawUsername}" not found`);
-      }
-    } else {
-      if (!rawWallet) {
-        throw new Error("Wallet address is required when username is not provided");
-      }
-      if (!data.firstname || !data.surname) {
-        throw new Error("Firstname and surname are required when username is not provided");
-      }
-
-      user = await User.findOne({
-        walletAddress: rawWallet.toLowerCase(),
-        isActive: true,
-      });
-
-      if (!user) {
-        isNewUser = true;
-        const generatedUsername = await this.generateUnregisteredUsername(rawWallet);
-        user = await User.create({
-          username: generatedUsername,
-          surname: data.surname,
-          firstname: data.firstname,
-          walletAddress: rawWallet.toLowerCase(),
-          fullName: `${data.firstname} ${data.surname}`,
-          role: "employee",
-          isActive: true,
-        });
-      }
-    }
+    const { user, isNewUser, source } = await this.resolveEmployeeUser(data);
 
     // Check if user is already in another organization
     if (
@@ -585,7 +616,7 @@ export class PayrollService {
     }
 
     // Update user with organization and job details
-    user.organizationId = new mongoose.Types.ObjectId(organizationId);
+    user.organizationId = this.toObjectId(organizationId);
     user.organizationSlug = organization.slug;
     if (isNewUser) {
       user.role = "employee";
@@ -605,12 +636,12 @@ export class PayrollService {
     });
 
     await EmployeeAuditLog.create({
-      organizationId: new mongoose.Types.ObjectId(organizationId),
+      organizationId: this.toObjectId(organizationId),
       employeeUserId: user._id,
       employeeUsername: user.username,
       employeeWalletAddress: user.walletAddress,
       action: "ADD",
-      performedByUserId: performedBy?.userId ? new mongoose.Types.ObjectId(performedBy.userId) : undefined,
+      performedByUserId: performedBy?.userId ? this.toObjectId(performedBy.userId) : undefined,
       performedByUsername: performedBy?.username,
       performedByWalletAddress: performedBy?.walletAddress,
       changes: {
@@ -618,7 +649,7 @@ export class PayrollService {
         salary: data.salary,
         department: data.department,
         employeeId: data.employeeId,
-        source: rawUsername ? "username" : "wallet",
+        source,
       },
     });
 
@@ -641,7 +672,7 @@ export class PayrollService {
   ) {
     const user = await User.findOne({
       username: username.toLowerCase(),
-      organizationId: new mongoose.Types.ObjectId(organizationId),
+      organizationId: this.toObjectId(organizationId),
       isActive: true,
     });
 
@@ -658,12 +689,12 @@ export class PayrollService {
     await user.save();
 
     await EmployeeAuditLog.create({
-      organizationId: new mongoose.Types.ObjectId(organizationId),
+      organizationId: this.toObjectId(organizationId),
       employeeUserId: user._id,
       employeeUsername: user.username,
       employeeWalletAddress: user.walletAddress,
       action: "UPDATE",
-      performedByUserId: performedBy?.userId ? new mongoose.Types.ObjectId(performedBy.userId) : undefined,
+      performedByUserId: performedBy?.userId ? this.toObjectId(performedBy.userId) : undefined,
       performedByUsername: performedBy?.username,
       performedByWalletAddress: performedBy?.walletAddress,
       changes: updates,
@@ -682,7 +713,7 @@ export class PayrollService {
   ) {
     const user = await User.findOne({
       username: username.toLowerCase(),
-      organizationId: new mongoose.Types.ObjectId(organizationId),
+      organizationId: this.toObjectId(organizationId),
       isActive: true,
     });
 
@@ -718,12 +749,12 @@ export class PayrollService {
     });
 
     await EmployeeAuditLog.create({
-      organizationId: new mongoose.Types.ObjectId(organizationId),
+      organizationId: this.toObjectId(organizationId),
       employeeUserId: user._id,
       employeeUsername: prevUsername,
       employeeWalletAddress: prevWallet,
       action: "REMOVE",
-      performedByUserId: performedBy?.userId ? new mongoose.Types.ObjectId(performedBy.userId) : undefined,
+      performedByUserId: performedBy?.userId ? this.toObjectId(performedBy.userId) : undefined,
       performedByUsername: performedBy?.username,
       performedByWalletAddress: performedBy?.walletAddress,
     });
@@ -758,13 +789,13 @@ export class PayrollService {
     const employeeIds = baseEmployees
       .map((e: any) => e?._id)
       .filter(Boolean)
-      .map((id: any) => new mongoose.Types.ObjectId(id));
+      .map((id: any) => this.toObjectId(id));
 
     const lastAudits = employeeIds.length
       ? await EmployeeAuditLog.aggregate([
           {
             $match: {
-              organizationId: new mongoose.Types.ObjectId(organizationId),
+              organizationId: this.toObjectId(organizationId),
               employeeUserId: { $in: employeeIds },
             },
           },
@@ -794,17 +825,63 @@ export class PayrollService {
           },
           {
             $addFields: {
-              performedByUsername: {
-                $ifNull: ["$performedByUsername", "$performedByUser.username"],
-              },
               performedByWalletAddress: {
                 $ifNull: ["$performedByWalletAddress", "$performedByUser.walletAddress"],
               },
             },
           },
           {
+            $lookup: {
+              from: "users",
+              let: { performedByWallet: "$performedByWalletAddress" },
+              pipeline: [
+                {
+                  $match: {
+                    $expr: {
+                      $and: [
+                        { $ne: ["$$performedByWallet", null] },
+                        { $eq: ["$walletAddress", "$$performedByWallet"] },
+                      ],
+                    },
+                  },
+                },
+                { $project: { username: 1, walletAddress: 1 } },
+              ],
+              as: "performedByWalletUser",
+            },
+          },
+          {
+            $addFields: {
+              performedByWalletUser: { $arrayElemAt: ["$performedByWalletUser", 0] },
+            },
+          },
+          {
+            $addFields: {
+              performedByUsername: {
+                $ifNull: [
+                  {
+                    $cond: [
+                      {
+                        $or: [
+                          { $eq: ["$performedByUsername", null] },
+                          { $eq: ["$performedByUsername", ""] },
+                        ],
+                      },
+                      null,
+                      "$performedByUsername",
+                    ],
+                  },
+                  {
+                    $ifNull: ["$performedByUser.username", "$performedByWalletUser.username"],
+                  },
+                ],
+              },
+            },
+          },
+          {
             $project: {
               performedByUser: 0,
+              performedByWalletUser: 0,
             },
           },
         ])
@@ -818,6 +895,7 @@ export class PayrollService {
       const audit = auditByEmployeeId.get(String(e._id));
       return {
         ...e,
+        displayUsername: this.getDisplayUsername(e.username),
         lastAudit: audit
           ? {
               action: audit.action,
@@ -877,11 +955,11 @@ export class PayrollService {
     // Create batch record
     const batch = await BatchPayroll.create({
       batchName: data.batchName,
-      organizationId: new mongoose.Types.ObjectId(data.organizationId),
+      organizationId: this.toObjectId(data.organizationId),
       organizationAddress: data.organizationAddress.toLowerCase(),
       creatorAddress: data.creatorAddress.toLowerCase(),
       recipients: data.recipients.map((r) => ({
-        userId: r.userId ? new mongoose.Types.ObjectId(r.userId) : undefined,
+        userId: r.userId ? this.toObjectId(r.userId) : undefined,
         walletAddress: r.walletAddress.toLowerCase(),
         amount: r.amount,
         employeeName: r.employeeName,
@@ -973,7 +1051,7 @@ export class PayrollService {
     status?: string
   ): Promise<IBatchPayroll[]> {
     const query: any = {
-      organizationId: new mongoose.Types.ObjectId(organizationId),
+      organizationId: this.toObjectId(organizationId),
     };
 
     if (status) {
