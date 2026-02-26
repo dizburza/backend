@@ -137,7 +137,10 @@ export interface BatchPayrollData {
 }
 
 export interface AddEmployeeData {
-  username: string;
+  username?: string;
+  walletAddress?: string;
+  surname?: string;
+  firstname?: string;
   jobRole: string;
   salary: string;
   department?: string;

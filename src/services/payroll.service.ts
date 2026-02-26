@@ -1,6 +1,7 @@
 import { Organization, IOrganization } from "../models/Organization.model.js";
 import { BatchPayroll, IBatchPayroll } from "../models/BatchPayroll.model.js";
 import { User } from "../models/User.model.js";
+import { EmployeeAuditLog } from "../models/EmployeeAuditLog.model.js";
 import { CryptoUtil } from "../utils/crypto.util.js";
 import mongoose from "mongoose";
 import {
@@ -62,7 +63,7 @@ export class PayrollService {
       "John",
       "0x1234567890abcdef1234567890abcdef12345678",
       "Software Engineer",
-      "500000000000",
+      "500000",
       "Engineering",
       "EMP001"
     ].join(",");
@@ -106,6 +107,22 @@ export class PayrollService {
       if (!row) continue;
 
       const { walletAddress } = row;
+
+      const missingFields: string[] = [];
+      if (!row.surname) missingFields.push("surname");
+      if (!row.firstname) missingFields.push("firstname");
+      if (!walletAddress) missingFields.push("walletAddress");
+      if (!row.salary) missingFields.push("salary");
+
+      if (missingFields.length > 0) {
+        this.recordError(
+          results,
+          i,
+          walletAddress || "",
+          `Missing required fields: ${missingFields.join(", ")}`
+        );
+        continue;
+      }
 
       if (!walletAddress) {
         this.recordError(results, i, "", "Wallet address is required");
@@ -219,8 +236,40 @@ export class PayrollService {
       username: username || "",
       status: "added",
       isVerified: !isNewUser,
-      message: isNewUser ? "New user created (unverified)" : "Existing user added",
+      message: isNewUser ? "User not registered (unverified)" : "Existing user added",
     });
+  }
+
+  private static normalizeSalaryToChainUnits(salary: string): string {
+    const trimmed = salary.trim();
+    if (!trimmed) return "0";
+
+    const asBigInt = BigInt(trimmed);
+
+    // Heuristic:
+    // - If salary is already scaled for chain (>= 1e10), keep as-is.
+    // - Otherwise multiply by 1e6 (human amount -> chain units).
+    const CHAIN_THRESHOLD = 10_000_000_000n;
+    if (asBigInt >= CHAIN_THRESHOLD) return asBigInt.toString();
+
+    return (asBigInt * 1_000_000n).toString();
+  }
+
+  private static async generateUnregisteredUsername(walletAddress: string): Promise<string> {
+    const normalized = walletAddress.trim().toLowerCase();
+    const walletSuffix = normalized.startsWith("0x")
+      ? normalized.slice(2, 10)
+      : normalized.slice(0, 8);
+
+    const base = `unregistered_${walletSuffix}`;
+    let candidate = base;
+    let counter = 1;
+    // Ensure uniqueness across the entire User collection
+    while (await User.exists({ username: candidate })) {
+      candidate = `${base}${counter}`;
+      counter++;
+    }
+    return candidate;
   }
 
   private static recordSkipped(
@@ -255,7 +304,7 @@ export class PayrollService {
       organizationSlug,
       jobDetails: {
         jobRole: row.jobRole,
-        salary: row.salary,
+        salary: this.normalizeSalaryToChainUnits(row.salary),
         department: row.department,
         employeeId: row.employeeId,
         joinedAt: new Date(),
@@ -276,7 +325,7 @@ export class PayrollService {
     user.fullName = `${row.firstname || user.firstname} ${row.surname || user.surname}`;
     user.jobDetails = {
       jobRole: row.jobRole,
-      salary: row.salary,
+      salary: this.normalizeSalaryToChainUnits(row.salary),
       department: row.department,
       employeeId: row.employeeId,
       joinedAt: new Date(),
@@ -357,11 +406,18 @@ export class PayrollService {
         await this.updateExistingUser(user, organizationId, organizationSlug, row);
       } else {
         isNewUser = true;
+
+        const walletSuffix = walletAddress.startsWith("0x")
+          ? walletAddress.slice(2, 10)
+          : walletAddress.slice(0, 8);
+
         const generatedUsername = this.generateUniqueUsername(
           firstname,
           surname,
           existingUsernames,
           generatedUsernames
+          ,
+          `unregistered_${walletSuffix}`
         );
         generatedUsernames.add(generatedUsername);
         existingUsernames.add(generatedUsername);
@@ -370,7 +426,7 @@ export class PayrollService {
       }
 
       await this.addEmployeeToOrganization(organizationId, user._id, walletAddress, existingWallets);
-      this.recordSuccess(results, walletAddress, user.username || "", isNewUser);
+      this.recordSuccess(results, walletAddress, isNewUser ? "" : (user.username || ""), isNewUser);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
       this.recordError(results, rowIndex, walletAddress, errorMsg);
@@ -460,15 +516,52 @@ export class PayrollService {
   /**
    * Add employee to organization with role and salary
    */
-  static async addEmployee(organizationId: string, data: AddEmployeeData) {
-    // Find user by username
-    const user = await User.findOne({
-      username: data.username.toLowerCase(),
-      isActive: true,
-    });
+  static async addEmployee(
+    organizationId: string,
+    data: AddEmployeeData,
+    performedBy?: { userId?: string; username?: string; walletAddress?: string }
+  ) {
+    const rawUsername = (data.username || "").trim();
+    const rawWallet = (data.walletAddress || "").trim();
 
-    if (!user) {
-      throw new Error(`User with username "${data.username}" not found`);
+    let user = null as any;
+    let isNewUser = false;
+
+    if (rawUsername) {
+      user = await User.findOne({
+        username: rawUsername.toLowerCase(),
+        isActive: true,
+      });
+
+      if (!user) {
+        throw new Error(`User with username "${rawUsername}" not found`);
+      }
+    } else {
+      if (!rawWallet) {
+        throw new Error("Wallet address is required when username is not provided");
+      }
+      if (!data.firstname || !data.surname) {
+        throw new Error("Firstname and surname are required when username is not provided");
+      }
+
+      user = await User.findOne({
+        walletAddress: rawWallet.toLowerCase(),
+        isActive: true,
+      });
+
+      if (!user) {
+        isNewUser = true;
+        const generatedUsername = await this.generateUnregisteredUsername(rawWallet);
+        user = await User.create({
+          username: generatedUsername,
+          surname: data.surname,
+          firstname: data.firstname,
+          walletAddress: rawWallet.toLowerCase(),
+          fullName: `${data.firstname} ${data.surname}`,
+          role: "employee",
+          isActive: true,
+        });
+      }
     }
 
     // Check if user is already in another organization
@@ -494,9 +587,12 @@ export class PayrollService {
     // Update user with organization and job details
     user.organizationId = new mongoose.Types.ObjectId(organizationId);
     user.organizationSlug = organization.slug;
+    if (isNewUser) {
+      user.role = "employee";
+    }
     user.jobDetails = {
       jobRole: data.jobRole,
-      salary: data.salary,
+      salary: this.normalizeSalaryToChainUnits(data.salary),
       department: data.department,
       employeeId: data.employeeId,
       joinedAt: new Date(),
@@ -506,6 +602,24 @@ export class PayrollService {
     // Add to organization's employees array
     await Organization.findByIdAndUpdate(organizationId, {
       $addToSet: { employees: user._id },
+    });
+
+    await EmployeeAuditLog.create({
+      organizationId: new mongoose.Types.ObjectId(organizationId),
+      employeeUserId: user._id,
+      employeeUsername: user.username,
+      employeeWalletAddress: user.walletAddress,
+      action: "ADD",
+      performedByUserId: performedBy?.userId ? new mongoose.Types.ObjectId(performedBy.userId) : undefined,
+      performedByUsername: performedBy?.username,
+      performedByWalletAddress: performedBy?.walletAddress,
+      changes: {
+        jobRole: data.jobRole,
+        salary: data.salary,
+        department: data.department,
+        employeeId: data.employeeId,
+        source: rawUsername ? "username" : "wallet",
+      },
     });
 
     return user;
@@ -522,7 +636,8 @@ export class PayrollService {
       salary?: string;
       department?: string;
       employeeId?: string;
-    }
+    },
+    performedBy?: { userId?: string; username?: string; walletAddress?: string }
   ) {
     const user = await User.findOne({
       username: username.toLowerCase(),
@@ -538,8 +653,21 @@ export class PayrollService {
     user.jobDetails = {
       ...user.jobDetails,
       ...updates,
+      ...(updates.salary ? { salary: this.normalizeSalaryToChainUnits(updates.salary) } : {}),
     };
     await user.save();
+
+    await EmployeeAuditLog.create({
+      organizationId: new mongoose.Types.ObjectId(organizationId),
+      employeeUserId: user._id,
+      employeeUsername: user.username,
+      employeeWalletAddress: user.walletAddress,
+      action: "UPDATE",
+      performedByUserId: performedBy?.userId ? new mongoose.Types.ObjectId(performedBy.userId) : undefined,
+      performedByUsername: performedBy?.username,
+      performedByWalletAddress: performedBy?.walletAddress,
+      changes: updates,
+    });
 
     return user;
   }
@@ -547,7 +675,11 @@ export class PayrollService {
   /**
    * Remove employee from organization
    */
-  static async removeEmployee(organizationId: string, username: string) {
+  static async removeEmployee(
+    organizationId: string,
+    username: string,
+    performedBy?: { userId?: string; username?: string; walletAddress?: string }
+  ) {
     const user = await User.findOne({
       username: username.toLowerCase(),
       organizationId: new mongoose.Types.ObjectId(organizationId),
@@ -572,6 +704,8 @@ export class PayrollService {
     }
 
     // Remove organization details from user
+    const prevUsername = user.username;
+    const prevWallet = user.walletAddress;
     user.organizationId = undefined;
     user.organizationSlug = undefined;
     user.jobDetails = undefined;
@@ -581,6 +715,17 @@ export class PayrollService {
     // Remove from organization's employees array
     await Organization.findByIdAndUpdate(organizationId, {
       $pull: { employees: user._id },
+    });
+
+    await EmployeeAuditLog.create({
+      organizationId: new mongoose.Types.ObjectId(organizationId),
+      employeeUserId: user._id,
+      employeeUsername: prevUsername,
+      employeeWalletAddress: prevWallet,
+      action: "REMOVE",
+      performedByUserId: performedBy?.userId ? new mongoose.Types.ObjectId(performedBy.userId) : undefined,
+      performedByUsername: performedBy?.username,
+      performedByWalletAddress: performedBy?.walletAddress,
     });
 
     return user;
@@ -605,10 +750,55 @@ export class PayrollService {
     const activeSigners = organization.signers.filter(s => s.isActive);
 
     // Return only regular employees (signers are managed separately)
-    const employees = (organization.employees as any[]).map((e: any) => ({
+    const baseEmployees = (organization.employees as any[]).map((e: any) => ({
       ...e.toObject?.() || e,
       isSigner: false,
     }));
+
+    const employeeIds = baseEmployees
+      .map((e: any) => e?._id)
+      .filter(Boolean)
+      .map((id: any) => new mongoose.Types.ObjectId(id));
+
+    const lastAudits = employeeIds.length
+      ? await EmployeeAuditLog.aggregate([
+          {
+            $match: {
+              organizationId: new mongoose.Types.ObjectId(organizationId),
+              employeeUserId: { $in: employeeIds },
+            },
+          },
+          { $sort: { createdAt: -1 } },
+          {
+            $group: {
+              _id: "$employeeUserId",
+              action: { $first: "$action" },
+              createdAt: { $first: "$createdAt" },
+              performedByUsername: { $first: "$performedByUsername" },
+              performedByWalletAddress: { $first: "$performedByWalletAddress" },
+            },
+          },
+        ])
+      : [];
+
+    const auditByEmployeeId = new Map(
+      lastAudits.map((a: any) => [String(a._id), a])
+    );
+
+    const employees = baseEmployees.map((e: any) => {
+      const audit = auditByEmployeeId.get(String(e._id));
+      return {
+        ...e,
+        lastAudit: audit
+          ? {
+              action: audit.action,
+              createdAt: audit.createdAt,
+              performedByUsername: audit.performedByUsername,
+              performedByWalletAddress: audit.performedByWalletAddress,
+            }
+          : null,
+      };
+    });
 
     return {
       organization: {

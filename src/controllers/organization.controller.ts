@@ -87,15 +87,26 @@ export class OrganizationController {
    */
   static readonly addEmployee = asyncHandler(async (req: Request, res: Response) => {
     const { id } = req.params;
-    const { username, jobRole, salary, department, employeeId } = req.body;
+    const { username, walletAddress, surname, firstname, jobRole, salary, department, employeeId } = req.body;
+
+    const performedBy = req.user
+      ? {
+          userId: req.user._id?.toString(),
+          username: req.user.username,
+          walletAddress: req.user.walletAddress,
+        }
+      : undefined;
 
     const user = await PayrollService.addEmployee(id, {
       username,
+      walletAddress,
+      surname,
+      firstname,
       jobRole,
       salary,
       department,
       employeeId,
-    });
+    }, performedBy);
 
     ApiResponse.success(res, user, "Employee added successfully");
   });
@@ -120,12 +131,20 @@ export class OrganizationController {
     const { id, username } = req.params;
     const { jobRole, salary, department, employeeId } = req.body;
 
+    const performedBy = req.user
+      ? {
+          userId: req.user._id?.toString(),
+          username: req.user.username,
+          walletAddress: req.user.walletAddress,
+        }
+      : undefined;
+
     const user = await PayrollService.updateEmployee(id, username, {
       jobRole,
       salary,
       department,
       employeeId,
-    });
+    }, performedBy);
 
     ApiResponse.success(res, user, "Employee updated successfully");
   });
@@ -137,7 +156,15 @@ export class OrganizationController {
   static readonly removeEmployee = asyncHandler(async (req: Request, res: Response) => {
     const { id, username } = req.params;
 
-    const user = await PayrollService.removeEmployee(id, username);
+    const performedBy = req.user
+      ? {
+          userId: req.user._id?.toString(),
+          username: req.user.username,
+          walletAddress: req.user.walletAddress,
+        }
+      : undefined;
+
+    const user = await PayrollService.removeEmployee(id, username, performedBy);
 
     ApiResponse.success(res, user, "Employee removed successfully");
   });

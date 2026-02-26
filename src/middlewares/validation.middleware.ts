@@ -160,10 +160,39 @@ export const ValidationRules = {
     param("id").isMongoId().withMessage("Invalid organization ID"),
     body("username")
       .trim()
-      .notEmpty()
-      .withMessage("Username is required")
+      .optional({ values: "falsy" })
       .isLength({ min: 3, max: 30 })
       .withMessage("Username must be 3-30 characters"),
+    body("walletAddress")
+      .optional({ values: "falsy" })
+      .custom(ValidationUtil.isValidAddress)
+      .withMessage("Invalid wallet address"),
+    body("surname")
+      .optional({ values: "falsy" })
+      .trim()
+      .isLength({ min: 2, max: 50 })
+      .withMessage("Surname must be 2-50 characters"),
+    body("firstname")
+      .optional({ values: "falsy" })
+      .trim()
+      .isLength({ min: 2, max: 50 })
+      .withMessage("Firstname must be 2-50 characters"),
+    body().custom((value) => {
+      const hasUsername = Boolean((value?.username || "").trim());
+      if (hasUsername) return true;
+
+      const wallet = (value?.walletAddress || "").trim();
+      const surname = (value?.surname || "").trim();
+      const firstname = (value?.firstname || "").trim();
+
+      if (!wallet || !surname || !firstname) {
+        throw new Error(
+          "Either username must be provided, or walletAddress + surname + firstname are required"
+        );
+      }
+
+      return true;
+    }),
     body("jobRole")
       .trim()
       .notEmpty()
