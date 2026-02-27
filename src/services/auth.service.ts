@@ -184,7 +184,13 @@ export class AuthService {
     }
     return {
       isRegistered: true,
-      user,
+      user: {
+        ...user.toObject(),
+        jobDetails: {
+          ...user.jobDetails,
+          jobRole: user.jobDetails?.jobRole,
+        },
+      } as unknown as IUser,
       redirectTo,
       organization,
     };

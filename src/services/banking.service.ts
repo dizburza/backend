@@ -15,6 +15,17 @@ export class BankingService {
     // Check if transaction already exists
     const existing = await Transaction.findOne({ txHash: data.txHash });
     if (existing) {
+      const shouldUpdate =
+        (!existing.fee && data.fee) ||
+        (!existing.gasUsed && data.gasUsed) ||
+        (!existing.blockNumber && data.blockNumber);
+
+      if (shouldUpdate) {
+        existing.fee = existing.fee || data.fee;
+        existing.gasUsed = existing.gasUsed || data.gasUsed;
+        existing.blockNumber = existing.blockNumber || data.blockNumber;
+        await existing.save();
+      }
       return existing;
     }
 
@@ -39,6 +50,8 @@ export class BankingService {
       toUserId: toUser?._id,
       reference,
       currency: "cNGN",
+      fee: data.fee,
+      gasUsed: data.gasUsed,
       status: "confirmed",
       timestamp: new Date(),
       confirmedAt: new Date(),
@@ -98,6 +111,8 @@ export class BankingService {
         tx.fromAddress === walletAddress.toLowerCase()
           ? `-${ethers.formatUnits(tx.amount, 6)}`
           : `+${ethers.formatUnits(tx.amount, 6)}`,
+      fee: tx.fee,
+      gasUsed: tx.gasUsed,
     }));
 
     return {
@@ -198,8 +213,17 @@ export class BankingService {
         const to = parsedLog.args[1];
         const value = parsedLog.args[2];
 
+        const tx = await event.getTransaction();
         const receipt = await event.getTransactionReceipt();
         const { type, organizationId } = await getTxTypeAndOrganizationId(from);
+
+        const effectiveGasPrice =
+          (receipt as any)?.effectiveGasPrice ?? (tx as any)?.gasPrice;
+        const gasUsed = (receipt as any)?.gasUsed;
+        const fee =
+          effectiveGasPrice && gasUsed
+            ? (BigInt(effectiveGasPrice.toString()) * BigInt(gasUsed.toString())).toString()
+            : undefined;
 
         await BankingService.recordTransaction({
           txHash: event.transactionHash,
@@ -208,6 +232,8 @@ export class BankingService {
           toAddress: to,
           amount: value.toString(),
           blockNumber: receipt.blockNumber,
+          fee,
+          gasUsed: gasUsed ? gasUsed.toString() : undefined,
           organizationId,
         });
 

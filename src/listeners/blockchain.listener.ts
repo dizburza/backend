@@ -4,13 +4,81 @@ import { BankingService } from "../services/banking.service.js";
 import { User } from "../models/User.model.js";
 import { Organization } from "../models/Organization.model.js";
 import logger from "../utils/logger.util.js";
-import mongoose from "mongoose";
 
 export class BlockchainListener {
   private isListening: boolean = false;
   private restartAttempts: number = 0;
   private readonly maxRestartAttempts: number = 5;
   private readonly restartDelayMs: number = 5000;
+
+  private getFeeAndGasUsed(
+    receipt: ethers.TransactionReceipt,
+    tx: ethers.TransactionResponse
+  ): { fee?: string; gasUsed?: string } {
+    const effectiveGasPrice =
+      ("effectiveGasPrice" in (receipt as object)
+        ? (receipt as { effectiveGasPrice?: bigint }).effectiveGasPrice
+        : undefined) ?? tx.gasPrice;
+    const gasUsed = receipt.gasUsed;
+    const fee = effectiveGasPrice
+      ? (effectiveGasPrice * gasUsed).toString()
+      : undefined;
+
+    return {
+      fee,
+      gasUsed: gasUsed?.toString(),
+    };
+  }
+
+  private async handleTransferEvent(
+    from: string,
+    to: string,
+    value: bigint,
+    event: any
+  ) {
+    logger.debug(
+      `📝 Transfer detected: ${from} -> ${to} (${ethers.formatUnits(value, 6)} cNGN)`
+    );
+
+    const [fromUser, toUser] = await Promise.all([
+      User.findOne({ walletAddress: from.toLowerCase() }),
+      User.findOne({ walletAddress: to.toLowerCase() }),
+    ]);
+
+    if (!fromUser && !toUser) return;
+
+    const tx = await event.getTransaction();
+    const receipt = await event.getTransactionReceipt();
+    const { fee, gasUsed } = this.getFeeAndGasUsed(receipt, tx);
+
+    let type: "send" | "receive" | "payroll";
+
+    const isFromOrganization = await Organization.findOne({
+      contractAddress: from.toLowerCase(),
+    });
+
+    if (isFromOrganization) {
+      type = "payroll";
+    } else if (fromUser && fromUser.walletAddress === from.toLowerCase()) {
+      type = "send";
+    } else {
+      type = "receive";
+    }
+
+    await BankingService.recordTransaction({
+      txHash: tx.hash,
+      type,
+      fromAddress: from,
+      toAddress: to,
+      amount: value.toString(),
+      blockNumber: receipt.blockNumber,
+      fee,
+      gasUsed,
+      organizationId: isFromOrganization ? String(isFromOrganization._id) : undefined,
+    });
+
+    logger.info(`✅ Transaction recorded: ${tx.hash} (${type})`);
+  }
 
   private async getTxTypeAndOrganizationId(
     fromAddress: string,
@@ -26,7 +94,7 @@ export class BlockchainListener {
     if (organization) {
       return {
         type: "payroll",
-        organizationId: (organization._id as mongoose.Types.ObjectId).toString(),
+        organizationId: String(organization._id),
       };
     }
 
@@ -56,6 +124,8 @@ export class BlockchainListener {
       const tx = await event.getTransaction();
       const receipt = await event.getTransactionReceipt();
 
+      const { fee, gasUsed } = this.getFeeAndGasUsed(receipt, tx);
+
       const { type, organizationId } = await this.getTxTypeAndOrganizationId(
         from,
         walletAddress
@@ -68,6 +138,8 @@ export class BlockchainListener {
         toAddress: to,
         amount: value.toString(),
         blockNumber: receipt.blockNumber,
+        fee,
+        gasUsed,
         organizationId,
       });
 
@@ -103,53 +175,7 @@ export class BlockchainListener {
   private async setupListener() {
     cNGNContract.on("Transfer", async (from, to, value, event) => {
       try {
-        logger.debug(
-          `📝 Transfer detected: ${from} -> ${to} (${ethers.formatUnits(
-            value,
-            6
-          )} cNGN)`
-        );
-
-        const [fromUser, toUser] = await Promise.all([
-          User.findOne({ walletAddress: from.toLowerCase() }),
-          User.findOne({ walletAddress: to.toLowerCase() }),
-        ]);
-
-        if (fromUser || toUser) {
-          const tx = await event.getTransaction();
-          const receipt = await event.getTransactionReceipt();
-
-          let type: "send" | "receive" | "payroll";
-
-          const isFromOrganization = await Organization.findOne({
-            contractAddress: from.toLowerCase(),
-          });
-
-          if (isFromOrganization) {
-            type = "payroll";
-          } else if (
-            fromUser &&
-            fromUser.walletAddress === from.toLowerCase()
-          ) {
-            type = "send";
-          } else {
-            type = "receive";
-          }
-
-          await BankingService.recordTransaction({
-            txHash: tx.hash,
-            type,
-            fromAddress: from,
-            toAddress: to,
-            amount: value.toString(),
-            blockNumber: receipt.blockNumber,
-            organizationId: isFromOrganization
-              ? (isFromOrganization._id as mongoose.Types.ObjectId).toString()
-              : undefined,
-          });
-
-          logger.info(`✅ Transaction recorded: ${tx.hash} (${type})`);
-        }
+        await this.handleTransferEvent(from, to, value, event);
       } catch (error: any) {
         if (error?.message?.includes("filter not found")) {
           logger.warn("⚠️ Filter expired, restarting listener...");
@@ -283,6 +309,8 @@ export class BlockchainListener {
           const tx = await event.getTransaction();
           const receipt = await event.getTransactionReceipt();
 
+          const { fee, gasUsed } = this.getFeeAndGasUsed(receipt, tx);
+
           const organization = await Organization.findOne({
             contractAddress: contractAddress.toLowerCase(),
           });
@@ -294,8 +322,10 @@ export class BlockchainListener {
             toAddress: to,
             amount: value.toString(),
             blockNumber: receipt.blockNumber,
+            fee,
+            gasUsed,
             organizationId: organization
-              ? (organization._id as mongoose.Types.ObjectId).toString()
+              ? String(organization._id)
               : undefined,
           });
 

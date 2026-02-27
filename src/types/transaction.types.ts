@@ -26,7 +26,6 @@ export interface TransactionData {
   toUserId?: string;
   amount: string;
   currency?: string;
-  fee?: string;
   description?: string;
   memo?: string;
   reference?: string;
@@ -38,6 +37,7 @@ export interface TransactionData {
   organizationId?: string;
   blockNumber?: number;
   gasUsed?: string;
+  fee?: string;
   status?: TransactionStatus;
   bankDetails?: {
     accountNumber?: string;
