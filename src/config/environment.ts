@@ -20,6 +20,7 @@ export const ENV = {
   cNGN_ADDRESS:
     process.env.cNGN_ADDRESS || "0xa1F8BD1892C85746AE71B97C31B1965C4641f1F0",
   FACTORY_ADDRESS: process.env.FACTORY_ADDRESS || "",
+  HISTORY_SYNC_FROM_BLOCK: Number.parseInt(process.env.HISTORY_SYNC_FROM_BLOCK || "0", 10),
 
   // JWT
   JWT_SECRET: process.env.JWT_SECRET || "your-secret-key",

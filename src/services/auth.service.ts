@@ -5,8 +5,29 @@ import { ENV } from "../config/environment.js";
 import { CryptoUtil } from "../utils/crypto.util.js";
 import crypto from "node:crypto";
 import { UserRegistrationData, LoginData } from "../types/user.types.js";
+import { BankingService } from "./banking.service.js";
 
 export class AuthService {
+  private static triggerHistorySync(user: IUser) {
+    if (!user?.walletAddress) return;
+    if (user.lastHistorySyncAt) return;
+
+    const fromBlock = ENV.HISTORY_SYNC_FROM_BLOCK;
+    void BankingService.syncUserHistory(user.walletAddress, fromBlock)
+      .then(async () => {
+        try {
+          user.lastHistorySyncAt = new Date();
+          user.lastHistorySyncFromBlock = fromBlock;
+          await user.save();
+        } catch {
+          // ignore
+        }
+      })
+      .catch(() => {
+        // ignore
+      });
+  }
+
   /**
    * Register a new user
    */
@@ -49,9 +70,11 @@ export class AuthService {
       email: data.email,
       phoneNumber: data.phoneNumber,
       avatar: data.avatar,
-      role: data.role || "employee",
+      role: data.role || "user",
       authNonce: this.generateNonce(),
     });
+
+    this.triggerHistorySync(user);
 
     const token = this.generateToken(user);
 
@@ -93,6 +116,8 @@ export class AuthService {
     user.authNonce = this.generateNonce();
     await user.save();
 
+    this.triggerHistorySync(user);
+
     const token = this.generateToken(user);
 
     let redirectTo = "/wallet";
@@ -133,7 +158,6 @@ export class AuthService {
 
     let redirectTo = "/wallet";
     let organization = null;
-    let effectiveRole: IUser["role"] = user.role || "employee";
 
     if (user.organizationId && user.organizationSlug) {
       organization = await Organization.findById(user.organizationId);
@@ -151,13 +175,13 @@ export class AuthService {
       );
 
       if (isCreator || isActiveSigner) {
-        effectiveRole = "signer";
+        user.role = "signer";
       } else {
-        effectiveRole = "employee";
+        user.role = "employee";
       }
+    } else {
+      user.role = user.role || "user";
     }
-
-    user.role = effectiveRole;
     return {
       isRegistered: true,
       user,

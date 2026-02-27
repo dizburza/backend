@@ -52,6 +52,7 @@ router.get("/slug/:slug", OrganizationController.getBySlug);
 router.get(
   "/:id",
   authenticate,
+  requireRole("signer", "admin"),
   validate([param("id").isMongoId().withMessage("Invalid organization ID")]),
   OrganizationController.getById
 );
@@ -68,6 +69,7 @@ router.post(
 router.get(
   "/:id/employees",
   authenticate,
+  requireRole("signer", "admin"),
   validate([
     param("id").isMongoId().withMessage("Invalid organization ID"),
   ]),

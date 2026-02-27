@@ -4,6 +4,8 @@ import { User } from "../models/User.model.js";
 import { TransactionData, TransactionFilter } from "../types/transaction.types.js";
 import { cNGNContract } from "../config/blockchain.js";
 import crypto from "node:crypto";
+import mongoose from "mongoose";
+import { Organization } from "../models/Organization.model.js";
 
 export class BankingService {
   /**
@@ -138,8 +140,87 @@ export class BankingService {
    * Sync historical transactions for a user
    */
   static async syncUserHistory(walletAddress: string, fromBlock: number = 0) {
-    // This will be implemented in blockchain.listener.ts
-    // For now, return a placeholder
-    return { message: "History sync queued", walletAddress, fromBlock };
+    const normalized = walletAddress.toLowerCase();
+
+    const getTxTypeAndOrganizationId = async (
+      fromAddress: string
+    ): Promise<{ type: "send" | "receive" | "payroll"; organizationId?: string }> => {
+      const organization = await Organization.findOne({
+        contractAddress: fromAddress.toLowerCase(),
+      });
+
+      if (organization) {
+        return {
+          type: "payroll",
+          organizationId: (organization._id as mongoose.Types.ObjectId).toString(),
+        };
+      }
+
+      if (fromAddress.toLowerCase() === normalized) {
+        return { type: "send" };
+      }
+
+      return { type: "receive" };
+    };
+
+    const sentFilter = cNGNContract.filters.Transfer(walletAddress, null);
+    const receivedFilter = cNGNContract.filters.Transfer(null, walletAddress);
+
+    const [sentEvents, receivedEvents] = await Promise.all([
+      cNGNContract.queryFilter(sentFilter, fromBlock, "latest"),
+      cNGNContract.queryFilter(receivedFilter, fromBlock, "latest"),
+    ]);
+
+    const allEvents = [...sentEvents, ...receivedEvents]
+      .filter(
+        (event, index, self) =>
+          index ===
+          self.findIndex((e) => e.transactionHash === event.transactionHash)
+      )
+      .sort((a, b) => a.blockNumber - b.blockNumber);
+
+    let synced = 0;
+    let skipped = 0;
+
+    for (const event of allEvents) {
+      try {
+        const parsedLog = cNGNContract.interface.parseLog({
+          topics: [...event.topics],
+          data: event.data,
+        });
+
+        if (!parsedLog) {
+          skipped++;
+          continue;
+        }
+
+        const from = parsedLog.args[0];
+        const to = parsedLog.args[1];
+        const value = parsedLog.args[2];
+
+        const receipt = await event.getTransactionReceipt();
+        const { type, organizationId } = await getTxTypeAndOrganizationId(from);
+
+        await BankingService.recordTransaction({
+          txHash: event.transactionHash,
+          type,
+          fromAddress: from,
+          toAddress: to,
+          amount: value.toString(),
+          blockNumber: receipt.blockNumber,
+          organizationId,
+        });
+
+        synced++;
+      } catch (error: any) {
+        if (error?.message?.includes("duplicate")) {
+          skipped++;
+          continue;
+        }
+        skipped++;
+      }
+    }
+
+    return { walletAddress, fromBlock, total: allEvents.length, synced, skipped };
   }
 }

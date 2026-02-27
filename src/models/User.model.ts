@@ -10,9 +10,11 @@ export interface IUser extends Document {
   email?: string;
   phoneNumber?: string;
   avatar?: string;
-  role: "employee" | "signer" | "admin";
+  role: "user" | "employee" | "signer" | "admin";
   organizationId?: mongoose.Types.ObjectId;
   organizationSlug?: string;
+  lastHistorySyncAt?: Date;
+  lastHistorySyncFromBlock?: number;
 
   jobDetails?: {
     jobRole?: string;
@@ -66,8 +68,8 @@ const UserSchema = new Schema<IUser>(
     avatar: { type: String },
     role: {
       type: String,
-      enum: ["employee", "signer", "admin"],
-      default: "employee",
+      enum: ["user", "employee", "signer", "admin"],
+      default: "user",
       index: true,
     },
     organizationId: {
@@ -95,6 +97,8 @@ const UserSchema = new Schema<IUser>(
       language: { type: String, default: "en" },
       timezone: { type: String, default: "Africa/Lagos" },
     },
+    lastHistorySyncAt: { type: Date },
+    lastHistorySyncFromBlock: { type: Number },
     authNonce: String,
     lastLoginAt: Date,
     isActive: { type: Boolean, default: true },

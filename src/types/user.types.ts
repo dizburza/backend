@@ -7,7 +7,7 @@ export interface UserRegistrationData {
   email: string;
   phoneNumber?: string;
   avatar?: string;
-  role?: "employee" | "signer" | "admin";
+  role?: "user" | "employee" | "signer" | "admin";
 }
 
 export interface LoginData {
