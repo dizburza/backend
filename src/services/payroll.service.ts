@@ -1058,9 +1058,35 @@ export class PayrollService {
       query.status = status;
     }
 
-    return (await BatchPayroll.find(query)
-      .sort({ submittedAt: -1 })
-      .lean()) as unknown as IBatchPayroll[];
+    const batches = await BatchPayroll.aggregate([
+      { $match: query },
+      { $sort: { submittedAt: -1 } },
+      {
+        $lookup: {
+          from: "users",
+          localField: "creatorAddress",
+          foreignField: "walletAddress",
+          as: "creatorUser",
+        },
+      },
+      {
+        $addFields: {
+          creatorUser: { $arrayElemAt: ["$creatorUser", 0] },
+        },
+      },
+      {
+        $addFields: {
+          creatorJobRole: "$creatorUser.jobDetails.jobRole",
+        },
+      },
+      {
+        $project: {
+          creatorUser: 0,
+        },
+      },
+    ]);
+
+    return batches as unknown as IBatchPayroll[];
   }
 
   /**
