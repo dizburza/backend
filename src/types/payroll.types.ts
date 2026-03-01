@@ -30,6 +30,7 @@ export type Industry =
 export interface CreateOrganizationInput {
   name: string;
   contractAddress: string;
+  organizationHash?: string;
   creatorAddress: string;
   businessEmail: string;
   businessInfo?: {

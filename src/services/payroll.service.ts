@@ -515,12 +515,14 @@ export class PayrollService {
   ): Promise<IOrganization> {
     const slug = await CryptoUtil.generateUniqueSlug(data.name);
 
-    const organizationHash = CryptoUtil.generateOrganizationHash({
-      name: data.name,
-      creatorAddress: data.creatorAddress,
-      signers: data.signers.map((s) => s.address),
-      timestamp: Date.now(),
-    });
+    const organizationHash =
+      data.organizationHash ||
+      CryptoUtil.generateOrganizationHash({
+        name: data.name,
+        creatorAddress: data.creatorAddress,
+        signers: data.signers.map((s) => s.address),
+        timestamp: Date.now(),
+      });
 
     const organization = await Organization.create({
       name: data.name,

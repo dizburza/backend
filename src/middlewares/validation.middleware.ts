@@ -85,6 +85,12 @@ export const ValidationRules = {
       .withMessage("Organization name is required")
       .isLength({ min: 3, max: 100 })
       .withMessage("Organization name must be 3-100 characters"),
+    body("organizationHash")
+      .optional({ values: "falsy" })
+      .isString()
+      .trim()
+      .notEmpty()
+      .withMessage("organizationHash must be a non-empty string"),
     body("contractAddress")
       .custom(ValidationUtil.isValidAddress)
       .withMessage("Invalid contract address"),

@@ -14,6 +14,7 @@ export class OrganizationController {
       const {
         name,
         contractAddress,
+        organizationHash,
         creatorAddress,
         businessEmail,
         businessInfo,
@@ -26,6 +27,7 @@ export class OrganizationController {
       const organization = await PayrollService.createOrganization({
         name,
         contractAddress,
+        organizationHash,
         creatorAddress,
         businessEmail,
         businessInfo,
