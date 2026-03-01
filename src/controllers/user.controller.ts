@@ -88,7 +88,7 @@ export class UserController {
         username: username.toLowerCase(),
         isActive: true,
       }).select(
-        "username surname firstname fullName walletAddress avatar email role organizationId organizationSlug"
+        "username fullName walletAddress avatar role organizationId organizationSlug"
       );
 
       if (!user) {
@@ -101,13 +101,41 @@ export class UserController {
       ApiResponse.success(res, {
         user: {
           username: user.username,
-          surname: user.surname,
-          firstname: user.firstname,
           fullName: user.fullName,
           walletAddress: user.walletAddress,
           avatar: user.avatar,
-          email: user.email,
-          isAlreadySigner,
+          currentOrganization: user.organizationSlug,
+        },
+        canBeAdded: !isAlreadySigner,
+      });
+    }
+  );
+
+  static readonly searchByAddress = asyncHandler(
+    async (req: Request, res: Response) => {
+      const raw = (req.params.address || "").trim();
+      const address = raw.toLowerCase();
+
+      const user = await User.findOne({
+        walletAddress: address,
+        isActive: true,
+      }).select(
+        "username fullName walletAddress avatar role organizationId organizationSlug"
+      );
+
+      if (!user) {
+        ApiResponse.error(res, "User not found", 404);
+        return;
+      }
+
+      const isAlreadySigner = user.organizationId && user.role === "signer";
+
+      ApiResponse.success(res, {
+        user: {
+          username: user.username,
+          fullName: user.fullName,
+          walletAddress: user.walletAddress,
+          avatar: user.avatar,
           currentOrganization: user.organizationSlug,
         },
         canBeAdded: !isAlreadySigner,

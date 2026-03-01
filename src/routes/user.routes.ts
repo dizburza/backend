@@ -3,6 +3,7 @@ import { UserController } from "../controllers/user.controller.js";
 import { authenticate } from "../middlewares/auth.middleware.js";
 import { validate } from "../middlewares/validation.middleware.js";
 import { param, query, body } from "express-validator";
+import { ValidationUtil } from "../utils/validation.util.js";
 
 const router = Router();
 
@@ -32,7 +33,6 @@ router.post(
 // Search user by username
 router.get(
   "/search/:username",
-  authenticate,
   validate([
     param("username")
       .trim()
@@ -42,10 +42,21 @@ router.get(
   UserController.searchByUsername
 );
 
+// Search user by wallet address
+router.get(
+  "/search-address/:address",
+  validate([
+    param("address")
+      .trim()
+      .custom(ValidationUtil.isValidAddress)
+      .withMessage("Invalid wallet address"),
+  ]),
+  UserController.searchByAddress
+);
+
 // Auto-suggest usernames
 router.get(
   "/suggest",
-  authenticate,
   validate([
     query("query")
       .optional()
