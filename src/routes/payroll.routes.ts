@@ -29,6 +29,17 @@ router.post(
   PayrollController.recordBatchApproval
 );
 
+// Revoke batch approval
+router.post(
+  "/batches/:batchName/revoke",
+  authenticate,
+  requireRole("signer", "admin"),
+  validate([
+    param("batchName").trim().notEmpty().withMessage("Batch name is required"),
+  ]),
+  PayrollController.recordBatchApprovalRevocation
+);
+
 // Execute batch
 router.post(
   "/batches/:batchName/execute",

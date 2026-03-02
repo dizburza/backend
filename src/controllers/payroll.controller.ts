@@ -50,6 +50,24 @@ export class PayrollController {
   );
 
   /**
+   * POST /api/payroll/batches/:batchName/revoke
+   * Record approval revocation after frontend calls smart contract
+   */
+  static readonly recordBatchApprovalRevocation = asyncHandler(
+    async (req: Request, res: Response) => {
+      const { batchName } = req.params;
+      const { signerAddress } = req.body;
+
+      const batch = await PayrollService.recordBatchApprovalRevocation(
+        batchName,
+        signerAddress
+      );
+
+      ApiResponse.success(res, batch, "Batch approval revoked successfully");
+    }
+  );
+
+  /**
    * POST /api/payroll/batches/:batchName/execute
    * Record execution after frontend calls smart contract
    */
