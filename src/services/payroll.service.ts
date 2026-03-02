@@ -1021,6 +1021,46 @@ export class PayrollService {
   }
 
   /**
+   * Record batch approval revocation in database
+   * Frontend calls Dizburza.revokeBatchApproval() first
+   * Then calls this endpoint to update the record
+   */
+  static async recordBatchApprovalRevocation(
+    batchName: string,
+    signerAddress: string
+  ): Promise<IBatchPayroll> {
+    const batch = await BatchPayroll.findOne({ batchName });
+    if (!batch) {
+      throw new Error("Batch not found");
+    }
+
+    if (batch.status === "executed" || batch.status === "cancelled" || batch.status === "expired") {
+      throw new Error("Batch is finalized");
+    }
+
+    const normalizedSigner = signerAddress.toLowerCase();
+    const beforeCount = batch.approvals.length;
+    batch.approvals = batch.approvals.filter(
+      (approval) => approval.signerAddress.toLowerCase() !== normalizedSigner
+    );
+
+    if (batch.approvals.length === beforeCount) {
+      throw new Error("Signer has not approved this batch");
+    }
+
+    batch.approvalCount = batch.approvals.length;
+
+    if (batch.approvalCount >= batch.quorumRequired) {
+      batch.status = "approved";
+    } else {
+      batch.status = "pending";
+    }
+
+    await batch.save();
+    return batch;
+  }
+
+  /**
    * Record batch execution in database
    * Frontend calls Dizburza.executeBatchPayroll() first
    * Then calls this endpoint to update the record
