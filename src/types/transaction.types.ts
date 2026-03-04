@@ -19,6 +19,7 @@ export type TransactionStatus = "pending" | "confirmed" | "failed";
 
 export interface TransactionData {
   txHash: string;
+  logIndex?: number;
   type: TransactionType;
   fromAddress: string;
   toAddress: string;

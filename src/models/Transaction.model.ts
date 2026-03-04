@@ -2,6 +2,7 @@ import mongoose, { Schema, Document } from "mongoose";
 
 export interface ITransaction extends Document {
   txHash: string;
+  logIndex?: number;
   type:
     | "send"
     | "receive"
@@ -45,7 +46,11 @@ const TransactionSchema = new Schema<ITransaction>(
     txHash: {
       type: String,
       required: true,
-      unique: true,
+      index: true,
+    },
+    logIndex: {
+      type: Number,
+      required: false,
       index: true,
     },
     type: {
@@ -123,6 +128,7 @@ const TransactionSchema = new Schema<ITransaction>(
 );
 
 // Compound indexes
+TransactionSchema.index({ txHash: 1, logIndex: 1 }, { unique: true });
 TransactionSchema.index({ fromAddress: 1, timestamp: -1 });
 TransactionSchema.index({ toAddress: 1, timestamp: -1 });
 TransactionSchema.index({ fromUserId: 1, timestamp: -1 });

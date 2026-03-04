@@ -13,7 +13,11 @@ export class BankingService {
    */
   static async recordTransaction(data: TransactionData): Promise<ITransaction> {
     // Check if transaction already exists
-    const existing = await Transaction.findOne({ txHash: data.txHash });
+    const existing = await Transaction.findOne(
+      data.logIndex === undefined
+        ? { txHash: data.txHash }
+        : { txHash: data.txHash, logIndex: data.logIndex }
+    );
     if (existing) {
       const shouldUpdate =
         (!existing.fee && data.fee) ||

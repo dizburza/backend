@@ -5,6 +5,7 @@ import transactionRoutes from "./transaction.routes.js";
 import organizationRoutes from "./organization.routes.js";
 import payrollRoutes from "./payroll.routes.js";
 import userRoutes from "./user.routes.js";
+import webhookRoutes from "./webhooks.routes.js";
 
 const router = Router();
 
@@ -25,5 +26,6 @@ router.use("/organizations", organizationRoutes);
 router.use("/payroll", payrollRoutes);
 
 router.use("/users", userRoutes);
+router.use("/webhooks", webhookRoutes);
 
 export default router;

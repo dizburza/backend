@@ -16,7 +16,7 @@ export const ENV = {
 
   // Blockchain
   RPC_URL: process.env.RPC_URL,
-  CHAIN_ID: Number.parseInt(process.env.CHAIN_ID!, 10),
+  CHAIN_ID: Number.parseInt(process.env.CHAIN_ID || "84532", 10),
   cNGN_ADDRESS:
     process.env.cNGN_ADDRESS || "0xa1F8BD1892C85746AE71B97C31B1965C4641f1F0",
   FACTORY_ADDRESS: process.env.FACTORY_ADDRESS || "",

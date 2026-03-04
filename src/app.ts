@@ -19,7 +19,16 @@ const app = express();
 app.use(corsMiddleware);
 app.use(helmetMiddleware);
 app.use(hppMiddleware);
-app.use(express.json({ limit: "10mb" }));
+app.use(
+  express.json({
+    limit: "10mb",
+    verify: (req: any, _res, buf) => {
+      if (req.originalUrl?.startsWith("/api/webhooks/alchemy")) {
+        req.rawBody = buf.toString("utf8");
+      }
+    },
+  })
+);
 app.use(express.urlencoded({ extended: true }));
 app.use(sanitizeMiddleware);
 
