@@ -1,6 +1,8 @@
 import winston from "winston";
 import { ENV } from "../config/environment.js";
 
+const isVercel = process.env.VERCEL === "1";
+
 const logger = winston.createLogger({
   level: ENV.NODE_ENV === "production" ? "info" : "debug",
   format: winston.format.combine(
@@ -10,10 +12,16 @@ const logger = winston.createLogger({
     winston.format.json()
   ),
   defaultMeta: { service: "payroll-backend" },
-  transports: [
-    new winston.transports.File({ filename: "logs/error.log", level: "error" }),
-    new winston.transports.File({ filename: "logs/combined.log" }),
-  ],
+  transports:
+    ENV.NODE_ENV === "production" || isVercel
+      ? [new winston.transports.Console()]
+      : [
+          new winston.transports.File({
+            filename: "logs/error.log",
+            level: "error",
+          }),
+          new winston.transports.File({ filename: "logs/combined.log" }),
+        ],
 });
 
 if (ENV.NODE_ENV !== "production") {
