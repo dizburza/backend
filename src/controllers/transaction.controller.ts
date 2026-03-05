@@ -30,6 +30,25 @@ export class TransactionController {
   });
 
   /**
+   * GET /api/transactions/:address/summary
+   */
+  static readonly getSummary = asyncHandler(async (req: Request, res: Response) => {
+    const { address } = req.params as any;
+    const addressParam = Array.isArray(address) ? address[0] : address;
+    const { type, category, startDate, endDate, status } = req.query;
+
+    const filters: any = {};
+    if (type) filters.type = type;
+    if (category) filters.category = category;
+    if (status) filters.status = status;
+    if (startDate) filters.startDate = new Date(startDate as string);
+    if (endDate) filters.endDate = new Date(endDate as string);
+
+    const result = await BankingService.getTransactionSummary(addressParam, filters);
+    ApiResponse.success(res, result);
+  });
+
+  /**
    * POST /api/transactions/record
    */
   static readonly recordTransaction = asyncHandler(

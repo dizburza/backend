@@ -132,6 +132,94 @@ export class BankingService {
   }
 
   /**
+   * Get aggregated transaction totals for a wallet.
+   * Totals are computed server-side (Mongo aggregation) for fast UX and correctness.
+   */
+  static async getTransactionSummary(
+    walletAddress: string,
+    filters: TransactionFilter = {}
+  ) {
+    const {
+      type,
+      category,
+      startDate,
+      endDate,
+      status = "confirmed",
+    } = filters;
+
+    const walletLower = walletAddress.toLowerCase();
+
+    const match: any = {
+      $or: [{ fromAddress: walletLower }, { toAddress: walletLower }],
+      status,
+    };
+
+    if (type) match.type = type;
+    if (category) match.category = category;
+    if (startDate || endDate) {
+      match.timestamp = {};
+      if (startDate) match.timestamp.$gte = startDate;
+      if (endDate) match.timestamp.$lte = endDate;
+    }
+
+    const [result] = await Transaction.aggregate([
+      { $match: match },
+      {
+        $group: {
+          _id: null,
+          totalCount: { $sum: 1 },
+          inflowCount: {
+            $sum: {
+              $cond: [{ $eq: ["$toAddress", walletLower] }, 1, 0],
+            },
+          },
+          outflowCount: {
+            $sum: {
+              $cond: [{ $eq: ["$fromAddress", walletLower] }, 1, 0],
+            },
+          },
+          inflowAmountRaw: {
+            $sum: {
+              $cond: [
+                { $eq: ["$toAddress", walletLower] },
+                { $toDecimal: "$amount" },
+                0,
+              ],
+            },
+          },
+          outflowAmountRaw: {
+            $sum: {
+              $cond: [
+                { $eq: ["$fromAddress", walletLower] },
+                { $toDecimal: "$amount" },
+                0,
+              ],
+            },
+          },
+        },
+      },
+    ]);
+
+    const inflowRaw = result?.inflowAmountRaw?.toString?.() ?? "0";
+    const outflowRaw = result?.outflowAmountRaw?.toString?.() ?? "0";
+
+    const inflowAmount = ethers.formatUnits(BigInt(inflowRaw.split(".")[0] || "0"), 6);
+    const outflowAmount = ethers.formatUnits(BigInt(outflowRaw.split(".")[0] || "0"), 6);
+
+    return {
+      walletAddress: walletLower,
+      status,
+      totalCount: result?.totalCount ?? 0,
+      inflowCount: result?.inflowCount ?? 0,
+      outflowCount: result?.outflowCount ?? 0,
+      inflowAmount,
+      outflowAmount,
+      inflowAmountRaw: inflowRaw,
+      outflowAmountRaw: outflowRaw,
+    };
+  }
+
+  /**
    * Get balance from blockchain
    */
   static async getBalance(walletAddress: string): Promise<string> {

@@ -11,6 +11,16 @@ import { ValidationUtil } from "../utils/validation.util.js";
 
 const router = Router();
 
+// Get aggregated transaction totals (fast)
+router.get(
+  "/:address/summary",
+  optionalAuth,
+  validate([
+    param("address").custom(ValidationUtil.isValidAddress).withMessage("Invalid wallet address"),
+  ]),
+  TransactionController.getSummary
+);
+
 // Get transaction history
 router.get(
   "/:address",
