@@ -36,11 +36,12 @@ export class PayrollController {
    */
   static readonly recordBatchApproval = asyncHandler(
     async (req: Request, res: Response) => {
-      const { batchName } = req.params;
+      const { batchName } = req.params as any;
+      const batchNameParam = Array.isArray(batchName) ? batchName[0] : batchName;
       const { signerAddress, signerName } = req.body;
 
       const batch = await PayrollService.recordBatchApproval(
-        batchName,
+        batchNameParam,
         signerAddress,
         signerName
       );
@@ -55,11 +56,12 @@ export class PayrollController {
    */
   static readonly recordBatchApprovalRevocation = asyncHandler(
     async (req: Request, res: Response) => {
-      const { batchName } = req.params;
+      const { batchName } = req.params as any;
+      const batchNameParam = Array.isArray(batchName) ? batchName[0] : batchName;
       const { signerAddress } = req.body;
 
       const batch = await PayrollService.recordBatchApprovalRevocation(
-        batchName,
+        batchNameParam,
         signerAddress
       );
 
@@ -73,11 +75,12 @@ export class PayrollController {
    */
   static readonly recordBatchExecution = asyncHandler(
     async (req: Request, res: Response) => {
-      const { batchName } = req.params;
+      const { batchName } = req.params as any;
+      const batchNameParam = Array.isArray(batchName) ? batchName[0] : batchName;
       const { executorAddress, txHash } = req.body;
 
       const batch = await PayrollService.recordBatchExecution(
-        batchName,
+        batchNameParam,
         executorAddress,
         txHash
       );
@@ -91,11 +94,12 @@ export class PayrollController {
    * Get batches from database
    */
   static readonly getBatches = asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as any;
+    const idParam = Array.isArray(id) ? id[0] : id;
     const { status } = req.query;
 
     const batches = await PayrollService.getBatchesForOrganization(
-      id,
+      idParam,
       status as string | undefined
     );
 
@@ -107,9 +111,10 @@ export class PayrollController {
    * Get single batch details
    */
   static readonly getBatchByName = asyncHandler(async (req: Request, res: Response) => {
-    const { batchName } = req.params;
+    const { batchName } = req.params as any;
+    const batchNameParam = Array.isArray(batchName) ? batchName[0] : batchName;
 
-    const batch = await PayrollService.getBatchByName(batchName);
+    const batch = await PayrollService.getBatchByName(batchNameParam);
 
     if (!batch) {
       ApiResponse.error(res, "Batch not found", 404);
@@ -125,9 +130,10 @@ export class PayrollController {
    */
   static readonly recordBatchCancellation = asyncHandler(
     async (req: Request, res: Response) => {
-      const { batchName } = req.params;
+      const { batchName } = req.params as any;
+      const batchNameParam = Array.isArray(batchName) ? batchName[0] : batchName;
 
-      const batch = await PayrollService.recordBatchCancellation(batchName);
+      const batch = await PayrollService.recordBatchCancellation(batchNameParam);
 
       ApiResponse.success(
         res,

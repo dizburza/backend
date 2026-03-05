@@ -8,7 +8,8 @@ export class TransactionController {
    * GET /api/transactions/:address
    */
   static readonly getHistory = asyncHandler(async (req: Request, res: Response) => {
-    const { address } = req.params;
+    const { address } = req.params as any;
+    const addressParam = Array.isArray(address) ? address[0] : address;
     const { page, limit, type, category, startDate, endDate, status } =
       req.query;
 
@@ -23,7 +24,7 @@ export class TransactionController {
     if (startDate) filters.startDate = new Date(startDate as string);
     if (endDate) filters.endDate = new Date(endDate as string);
 
-    const result = await BankingService.getTransactionHistory(address, filters);
+    const result = await BankingService.getTransactionHistory(addressParam, filters);
 
     ApiResponse.success(res, result);
   });

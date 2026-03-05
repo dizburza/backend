@@ -51,10 +51,11 @@ export class OrganizationController {
    */
   static readonly getSignerOrganization = asyncHandler(
     async (req: Request, res: Response) => {
-      const { address } = req.params;
+      const { address } = req.params as any;
+      const addressParam = Array.isArray(address) ? address[0] : address;
 
       const organization = await PayrollService.getOrganizationForSigner(
-        address
+        addressParam
       );
 
       if (!organization) {
@@ -71,9 +72,10 @@ export class OrganizationController {
    * Get organization by slug (for organization dashboard)
    */
   static readonly getBySlug = asyncHandler(async (req: Request, res: Response) => {
-    const { slug } = req.params;
+    const { slug } = req.params as any;
+    const slugParam = Array.isArray(slug) ? slug[0] : slug;
 
-    const organization = await PayrollService.getOrganizationBySlug(slug);
+    const organization = await PayrollService.getOrganizationBySlug(slugParam);
 
     if (!organization) {
       ApiResponse.error(res, "Organization not found", 404);
@@ -88,7 +90,8 @@ export class OrganizationController {
    * Add employee to organization
    */
   static readonly addEmployee = asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as any;
+    const idParam = Array.isArray(id) ? id[0] : id;
     const { username, walletAddress, surname, firstname, jobRole, salary, department, employeeId } = req.body;
 
     const performedBy = req.user
@@ -99,7 +102,7 @@ export class OrganizationController {
         }
       : undefined;
 
-    const user = await PayrollService.addEmployee(id, {
+    const user = await PayrollService.addEmployee(idParam, {
       username,
       walletAddress,
       surname,
@@ -118,9 +121,10 @@ export class OrganizationController {
    * Get all employees in organization
    */
   static readonly getEmployees = asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as any;
+    const idParam = Array.isArray(id) ? id[0] : id;
 
-    const result = await PayrollService.getOrganizationEmployees(id);
+    const result = await PayrollService.getOrganizationEmployees(idParam);
 
     ApiResponse.success(res, result);
   });
@@ -130,7 +134,9 @@ export class OrganizationController {
    * Update employee details
    */
   static readonly updateEmployee = asyncHandler(async (req: Request, res: Response) => {
-    const { id, username } = req.params;
+    const { id, username } = req.params as any;
+    const idParam = Array.isArray(id) ? id[0] : id;
+    const usernameParam = Array.isArray(username) ? username[0] : username;
     const { jobRole, salary, department, employeeId } = req.body;
 
     const performedBy = req.user
@@ -141,7 +147,7 @@ export class OrganizationController {
         }
       : undefined;
 
-    const user = await PayrollService.updateEmployee(id, username, {
+    const user = await PayrollService.updateEmployee(idParam, usernameParam, {
       jobRole,
       salary,
       department,
@@ -156,7 +162,9 @@ export class OrganizationController {
    * Remove employee from organization
    */
   static readonly removeEmployee = asyncHandler(async (req: Request, res: Response) => {
-    const { id, username } = req.params;
+    const { id, username } = req.params as any;
+    const idParam = Array.isArray(id) ? id[0] : id;
+    const usernameParam = Array.isArray(username) ? username[0] : username;
 
     const performedBy = req.user
       ? {
@@ -166,7 +174,7 @@ export class OrganizationController {
         }
       : undefined;
 
-    const user = await PayrollService.removeEmployee(id, username, performedBy);
+    const user = await PayrollService.removeEmployee(idParam, usernameParam, performedBy);
 
     ApiResponse.success(res, user, "Employee removed successfully");
   });
@@ -187,9 +195,10 @@ export class OrganizationController {
    * Get organization by ID
    */
   static readonly getById = asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as any;
+    const idParam = Array.isArray(id) ? id[0] : id;
 
-    const organization = await Organization.findById(id).populate(
+    const organization = await Organization.findById(idParam).populate(
       "employees",
       "username fullName walletAddress avatar"
     );
@@ -219,7 +228,8 @@ export class OrganizationController {
    * Bulk upload employees from CSV
    */
   static readonly bulkAddEmployees = asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params;
+    const { id } = req.params as any;
+    const idParam = Array.isArray(id) ? id[0] : id;
     const { csvData } = req.body;
 
     if (!csvData || typeof csvData !== "string") {
@@ -228,7 +238,7 @@ export class OrganizationController {
     }
 
     try {
-      const results = await PayrollService.bulkAddEmployees(id, csvData);
+      const results = await PayrollService.bulkAddEmployees(idParam, csvData);
       ApiResponse.success(res, results, `Added ${results.added} employees. ${results.errors.length} errors.`);
     } catch (error) {
       const message = error instanceof Error ? error.message : "Failed to process CSV";
@@ -245,10 +255,11 @@ export class OrganizationController {
    * Get organization created by address
    */
   static readonly getByCreator = asyncHandler(async (req: Request, res: Response) => {
-    const { address } = req.params;
+    const { address } = req.params as any;
+    const addressParam = Array.isArray(address) ? address[0] : address;
 
     const organization = await Organization.findOne({
-      creatorAddress: address.toLowerCase(),
+      creatorAddress: addressParam.toLowerCase(),
       isActive: true,
     }).populate("employees", "username fullName walletAddress avatar");
 

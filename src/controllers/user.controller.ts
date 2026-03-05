@@ -5,17 +5,19 @@ import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
 
 export class UserController {
   static readonly resolveUsername = asyncHandler(async (req: Request, res: Response) => {
-    const raw = (req.params.username || "").trim();
+    const { username } = req.params as any;
+    const usernameParam = Array.isArray(username) ? username[0] : username;
+    const raw = (usernameParam || "").trim();
     const cleaned = raw.startsWith("@") ? raw.slice(1) : raw;
-    const username = cleaned.toLowerCase();
+    const normalizedUsername = cleaned.toLowerCase();
 
-    if (!username || username.length < 3) {
+    if (!normalizedUsername || normalizedUsername.length < 3) {
       ApiResponse.error(res, "Username must be at least 3 characters", 400);
       return;
     }
 
     const user = await User.findOne({
-      username,
+      username: normalizedUsername,
       isActive: true,
     }).select("username walletAddress");
 
@@ -77,15 +79,16 @@ export class UserController {
 
   static readonly searchByUsername = asyncHandler(
     async (req: Request, res: Response) => {
-      const { username } = req.params;
+      const { username } = req.params as any;
+      const usernameParam = Array.isArray(username) ? username[0] : username;
 
-      if (!username || username.length < 3) {
+      if (!usernameParam || usernameParam.length < 3) {
         ApiResponse.error(res, "Username must be at least 3 characters", 400);
         return;
       }
 
       const user = await User.findOne({
-        username: username.toLowerCase(),
+        username: usernameParam.toLowerCase(),
         isActive: true,
       }).select(
         "username fullName walletAddress avatar role organizationId organizationSlug"
@@ -113,11 +116,13 @@ export class UserController {
 
   static readonly searchByAddress = asyncHandler(
     async (req: Request, res: Response) => {
-      const raw = (req.params.address || "").trim();
-      const address = raw.toLowerCase();
+      const { address } = req.params as any;
+      const addressParam = Array.isArray(address) ? address[0] : address;
+      const raw = (addressParam || "").trim();
+      const normalizedAddress = raw.toLowerCase();
 
       const user = await User.findOne({
-        walletAddress: address,
+        walletAddress: normalizedAddress,
         isActive: true,
       }).select(
         "username fullName walletAddress avatar role organizationId organizationSlug"
