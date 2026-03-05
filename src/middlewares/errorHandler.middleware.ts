@@ -29,6 +29,16 @@ export const errorHandler = (
     message = err.message;
   }
 
+  const maybeMongoErr = err as any;
+  if (
+    !(err instanceof AppError) &&
+    (maybeMongoErr?.code === 11000 ||
+      String(maybeMongoErr?.message || "").includes("E11000 duplicate key"))
+  ) {
+    statusCode = 409;
+    message = "Duplicate record";
+  }
+
   // Log error
   logger.error("Error:", {
     message: err.message,

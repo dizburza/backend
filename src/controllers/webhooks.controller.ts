@@ -133,7 +133,8 @@ const recordCngnTransferIfRelevant = async (log: ParsedLog) => {
     Organization.findOne({ contractAddress: from.toLowerCase() }),
   ]);
 
-  if (!fromUser && !toUser && !org) return { recorded: false };
+  // Always record cNGN transfers so history-by-address remains accurate even if
+  // the DB was wiped and user/org records are temporarily missing.
 
   let type: "send" | "receive" | "payroll";
   if (org) {
@@ -141,7 +142,7 @@ const recordCngnTransferIfRelevant = async (log: ParsedLog) => {
   } else if (fromUser) {
     type = "send";
   } else {
-    type = "receive";
+    type = toUser ? "receive" : "send";
   }
 
   await BankingService.recordTransaction({

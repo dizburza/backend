@@ -513,6 +513,15 @@ export class PayrollService {
   static async createOrganization(
     data: CreateOrganizationInput
   ): Promise<IOrganization> {
+    const existing = await Organization.findOne({
+      contractAddress: data.contractAddress.toLowerCase(),
+      isActive: true,
+    });
+
+    if (existing) {
+      return existing;
+    }
+
     const slug = await CryptoUtil.generateUniqueSlug(data.name);
 
     const organizationHash =
@@ -937,6 +946,11 @@ export class PayrollService {
   static async recordBatchCreation(
     data: CreateBatchInput
   ): Promise<IBatchPayroll> {
+    const existing = await BatchPayroll.findOne({ batchName: data.batchName });
+    if (existing) {
+      return existing;
+    }
+
     // Get organization to fetch quorum
     const organization = await Organization.findById(data.organizationId);
     if (!organization) {
