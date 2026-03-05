@@ -6,6 +6,7 @@ import organizationRoutes from "./organization.routes.js";
 import payrollRoutes from "./payroll.routes.js";
 import userRoutes from "./user.routes.js";
 import webhookRoutes from "./webhooks.routes.js";
+import { dbMiddleware } from "../middlewares/db.middleware.js";
 
 const router = Router();
 
@@ -19,13 +20,13 @@ router.get("/health", (_req, res) => {
 });
 
 // Mount routes
-router.use("/auth", authRoutes);
-router.use("/wallet", walletRoutes);
-router.use("/transactions", transactionRoutes);
-router.use("/organizations", organizationRoutes);
-router.use("/payroll", payrollRoutes);
+router.use("/auth", dbMiddleware, authRoutes);
+router.use("/wallet", dbMiddleware, walletRoutes);
+router.use("/transactions", dbMiddleware, transactionRoutes);
+router.use("/organizations", dbMiddleware, organizationRoutes);
+router.use("/payroll", dbMiddleware, payrollRoutes);
 
-router.use("/users", userRoutes);
-router.use("/webhooks", webhookRoutes);
+router.use("/users", dbMiddleware, userRoutes);
+router.use("/webhooks", dbMiddleware, webhookRoutes);
 
 export default router;
