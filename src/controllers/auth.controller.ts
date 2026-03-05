@@ -54,9 +54,10 @@ export class AuthController {
    * GET /api/auth/check/:address
    */
   static readonly checkStatus = asyncHandler(async (req: Request, res: Response) => {
-    const { address } = req.params;
+    const { address } = req.params as any;
+    const addressParam = Array.isArray(address) ? address[0] : address;
 
-    const result = await AuthService.checkUserStatus(address);
+    const result = await AuthService.checkUserStatus(addressParam);
 
     ApiResponse.success(res, result);
   });
@@ -65,9 +66,10 @@ export class AuthController {
    * GET /api/auth/message/:address
    */
   static readonly getAuthMessage = asyncHandler(async (req: Request, res: Response) => {
-    const { address } = req.params;
+    const { address } = req.params as any;
+    const addressParam = Array.isArray(address) ? address[0] : address;
 
-    const message = await AuthService.getAuthMessage(address);
+    const message = await AuthService.getAuthMessage(addressParam);
 
     ApiResponse.success(res, { message });
   });

@@ -8,12 +8,13 @@ export class WalletController {
    * GET /api/wallet/:address/balance
    */
   static readonly getBalance = asyncHandler(async (req: Request, res: Response) => {
-    const { address } = req.params;
+    const { address } = req.params as any;
+    const addressParam = Array.isArray(address) ? address[0] : address;
 
-    const balance = await BankingService.getBalance(address);
+    const balance = await BankingService.getBalance(addressParam);
 
     ApiResponse.success(res, {
-      address,
+      address: addressParam,
       balance,
       currency: "cNGN",
     });
@@ -23,9 +24,10 @@ export class WalletController {
    * GET /api/wallet/:address/summary
    */
   static readonly getSummary = asyncHandler(async (req: Request, res: Response) => {
-    const { address } = req.params;
+    const { address } = req.params as any;
+    const addressParam = Array.isArray(address) ? address[0] : address;
 
-    const summary = await BankingService.getWalletSummary(address);
+    const summary = await BankingService.getWalletSummary(addressParam);
 
     ApiResponse.success(res, summary);
   });
@@ -34,10 +36,11 @@ export class WalletController {
    * POST /api/wallet/:address/sync
    */
   static readonly syncHistory = asyncHandler(async (req: Request, res: Response) => {
-    const { address } = req.params;
+    const { address } = req.params as any;
+    const addressParam = Array.isArray(address) ? address[0] : address;
     const { fromBlock } = req.body;
 
-    const result = await BankingService.syncUserHistory(address, fromBlock);
+    const result = await BankingService.syncUserHistory(addressParam, fromBlock);
 
     ApiResponse.success(res, result, "History sync initiated");
   });
