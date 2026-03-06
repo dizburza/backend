@@ -91,7 +91,7 @@ export class UserController {
         username: usernameParam.toLowerCase(),
         isActive: true,
       }).select(
-        "username fullName walletAddress avatar role organizationId organizationSlug"
+        "username surname firstname fullName walletAddress avatar role organizationId organizationSlug"
       );
 
       if (!user) {
@@ -104,6 +104,8 @@ export class UserController {
       ApiResponse.success(res, {
         user: {
           username: user.username,
+          surname: user.surname,
+          firstname: user.firstname,
           fullName: user.fullName,
           walletAddress: user.walletAddress,
           avatar: user.avatar,
@@ -125,7 +127,7 @@ export class UserController {
         walletAddress: normalizedAddress,
         isActive: true,
       }).select(
-        "username fullName walletAddress avatar role organizationId organizationSlug"
+        "username surname firstname fullName walletAddress avatar role organizationId organizationSlug"
       );
 
       if (!user) {
@@ -138,6 +140,8 @@ export class UserController {
       ApiResponse.success(res, {
         user: {
           username: user.username,
+          surname: user.surname,
+          firstname: user.firstname,
           fullName: user.fullName,
           walletAddress: user.walletAddress,
           avatar: user.avatar,
