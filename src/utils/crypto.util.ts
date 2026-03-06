@@ -1,6 +1,7 @@
 import { ethers } from "ethers";
 import crypto from "node:crypto";
 import logger from "./logger.util.js";
+import { Organization } from "../models/Organization.model.js";
 
 export class CryptoUtil {
   /**
@@ -39,7 +40,6 @@ export class CryptoUtil {
    * Check if slug is available
    */
   static async isSlugAvailable(slug: string): Promise<boolean> {
-    const { Organization } = require("../models/Organization.model");
     const existing = await Organization.findOne({ slug });
     return !existing;
   }
