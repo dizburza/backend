@@ -26,11 +26,34 @@ const extractLogsFromAlchemyPayload = (payload: any): ParsedLog[] => {
   if (!Array.isArray(topLevelLogs)) return logs;
 
   for (const item of topLevelLogs) {
+    // Custom webhook queries often return logs directly (each log already contains transaction.hash).
+    // Older shapes may return a transaction object that contains nested logs.
     const txHash = item?.transaction?.hash;
-    const txLogs = item?.transaction?.logs;
-    if (!Array.isArray(txLogs)) continue;
 
-    for (const l of txLogs) {
+    // Shape A: item is already a log entry
+    if (txHash && (item?.account?.address || item?.data || item?.topics)) {
+      const addr = item?.account?.address;
+      const topics = Array.isArray(item?.topics) ? item.topics : undefined;
+      const topic0 = topics?.[0];
+      const logIndex = typeof item?.index === "number" ? item.index : undefined;
+
+      logs.push({
+        address: addr,
+        topics,
+        topic0,
+        data: item?.data,
+        txHash,
+        logIndex,
+        blockNumber,
+      });
+      continue;
+    }
+
+    // Shape B: item contains nested transaction.logs
+    const nestedLogs = item?.transaction?.logs;
+    if (!Array.isArray(nestedLogs)) continue;
+
+    for (const l of nestedLogs) {
       const addr = l?.account?.address;
       const topics = Array.isArray(l?.topics) ? l.topics : undefined;
       const topic0 = topics?.[0];
@@ -177,6 +200,14 @@ export const alchemyWebhook = asyncHandler(async (req: Request, res: Response) =
 
   const logs = extractLogsFromAlchemyPayload(payload);
 
+  console.log("[alchemy][webhook] received", {
+    webhookId,
+    webhookEventId,
+    chainId: ENV.CHAIN_ID,
+    blockNumber: payload?.event?.data?.block?.number,
+    extractedLogs: Array.isArray(logs) ? logs.length : 0,
+  });
+
   const ingested: { stored: number; transfersRecorded: number; ignored: number } = {
     stored: 0,
     transfersRecorded: 0,
@@ -184,6 +215,11 @@ export const alchemyWebhook = asyncHandler(async (req: Request, res: Response) =
   };
 
   for (const log of logs) {
+    const topic0 = normalizeHex(log.topic0);
+    const address = normalizeHex(log.address);
+    const isCngnTransferCandidate =
+      topic0 === TRANSFER_TOPIC0 && !!address && address === ENV.cNGN_ADDRESS.toLowerCase();
+
     const { stored } = await storeOnchainEvent({
       payload,
       webhookId,
@@ -199,13 +235,49 @@ export const alchemyWebhook = asyncHandler(async (req: Request, res: Response) =
 
     if (stored) ingested.stored++;
 
-    const { recorded } = await recordCngnTransferIfRelevant(log);
-    if (recorded) {
-      ingested.transfersRecorded++;
-    } else {
-      ingested.ignored++;
+    try {
+      const { recorded } = await recordCngnTransferIfRelevant(log);
+      if (recorded) {
+        ingested.transfersRecorded++;
+        if (isCngnTransferCandidate) {
+          const from = topicToAddress(log.topics?.[1]);
+          const to = topicToAddress(log.topics?.[2]);
+          const amount =
+            typeof log.data === "string" && log.data.startsWith("0x")
+              ? BigInt(log.data).toString()
+              : undefined;
+          console.log("[alchemy][webhook][cngn][recorded]", {
+            txHash: normalizeHex(log.txHash),
+            logIndex: log.logIndex,
+            blockNumber: log.blockNumber,
+            from,
+            to,
+            amount,
+          });
+        }
+      } else {
+        ingested.ignored++;
+        if (isCngnTransferCandidate) {
+          console.log("[alchemy][webhook][cngn][ignored]", {
+            txHash: normalizeHex(log.txHash),
+            logIndex: log.logIndex,
+            blockNumber: log.blockNumber,
+          });
+        }
+      }
+    } catch (e: any) {
+      if (isCngnTransferCandidate) {
+        console.log("[alchemy][webhook][cngn][error]", {
+          txHash: normalizeHex(log.txHash),
+          logIndex: log.logIndex,
+          blockNumber: log.blockNumber,
+          message: e?.message,
+        });
+      }
+      throw e;
     }
   }
 
+  console.log("[alchemy][webhook] summary", ingested);
   res.json({ success: true, ...ingested });
 });
