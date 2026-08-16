@@ -1,7 +1,7 @@
 export const FACTORY_ABI = [
   {
     inputs: [
-      { internalType: "address", name: "_cNGN", type: "address" },
+      { internalType: "address", name: "_token", type: "address" },
       { internalType: "address", name: "_implementation", type: "address" },
     ],
     stateMutability: "nonpayable",
@@ -91,7 +91,7 @@ export const FACTORY_ABI = [
   },
   {
     inputs: [],
-    name: "cNGN",
+    name: "token",
     outputs: [{ internalType: "address", name: "", type: "address" }],
     stateMutability: "view",
     type: "function",
@@ -99,7 +99,7 @@ export const FACTORY_ABI = [
   {
     inputs: [
       { internalType: "string", name: "organizationHash", type: "string" },
-      { internalType: "address[]", name: "signers", type: "address[]" },
+      { internalType: "uint256", name: "targetSignerCount", type: "uint256" },
       { internalType: "uint256", name: "quorum", type: "uint256" },
     ],
     name: "createOrganization",

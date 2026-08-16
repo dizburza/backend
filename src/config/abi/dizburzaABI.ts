@@ -248,7 +248,7 @@ export const DIZBURZA_ABI = [
   },
   {
     inputs: [],
-    name: "cNGN",
+    name: "token",
     outputs: [{ internalType: "contract IERC20", name: "", type: "address" }],
     stateMutability: "view",
     type: "function",
@@ -342,7 +342,7 @@ export const DIZBURZA_ABI = [
   },
   {
     inputs: [
-      { internalType: "address", name: "_cNGN", type: "address" },
+      { internalType: "address", name: "_token", type: "address" },
       { internalType: "string", name: "_organizationHash", type: "string" },
       { internalType: "address[]", name: "_signers", type: "address[]" },
       { internalType: "uint256", name: "_quorum", type: "uint256" },
