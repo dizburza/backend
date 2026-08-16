@@ -2,11 +2,10 @@ import { Request, Response } from "express";
 import { asyncHandler, AppError } from "../middlewares/errorHandler.middleware.js";
 import { ENV } from "../config/environment.js";
 import { isValidAlchemySignatureForStringBody } from "../utils/alchemySignature.util.js";
-import connectDB from "../config/database.js";
-import { OnchainEvent } from "../models/OnchainEvent.model.js";
+import { db } from "../db/client.js";
+import { onchainEvents } from "../db/schema.js";
 import { BankingService } from "../services/banking.service.js";
-import { Organization } from "../models/Organization.model.js";
-import { User } from "../models/User.model.js";
+
 
 type ParsedLog = {
   address?: string;
@@ -122,8 +121,10 @@ const storeOnchainEvent = async (params: {
 
   const eventKey = `${ENV.CHAIN_ID}:${txHash || "noTx"}:${logIndex ?? -1}:${topic0 || "noTopic"}`;
 
-  try {
-    await OnchainEvent.create({
+  // Alchemy retries, so a repeat delivery is expected rather than an error.
+  const inserted = await db
+    .insert(onchainEvents)
+    .values({
       eventKey,
       webhookId,
       webhookEventId,
@@ -137,12 +138,11 @@ const storeOnchainEvent = async (params: {
       data: params.data,
       receivedAt: new Date(),
       payload,
-    });
-    return { stored: true };
-  } catch (e: any) {
-    if (e?.code === 11000) return { stored: false };
-    throw e;
-  }
+    })
+    .onConflictDoNothing({ target: onchainEvents.eventKey })
+    .returning({ id: onchainEvents.id });
+
+  return { stored: inserted.length > 0 };
 };
 
 const recordCngnTransferIfRelevant = async (log: ParsedLog) => {
@@ -150,7 +150,7 @@ const recordCngnTransferIfRelevant = async (log: ParsedLog) => {
   const address = normalizeHex(log.address);
 
   if (topic0 !== TRANSFER_TOPIC0) return { recorded: false };
-  if (!address || address !== ENV.cNGN_ADDRESS.toLowerCase()) return { recorded: false };
+  if (!address || address !== ENV.PAYROLL_TOKEN_ADDRESS.toLowerCase()) return { recorded: false };
 
   const txHash = normalizeHex(log.txHash);
   if (!txHash) return { recorded: false };
@@ -166,23 +166,13 @@ const recordCngnTransferIfRelevant = async (log: ParsedLog) => {
 
   const amount = BigInt(valueHex).toString();
 
-  const [fromUser, toUser, org] = await Promise.all([
-    User.findOne({ walletAddress: from.toLowerCase() }),
-    User.findOne({ walletAddress: to.toLowerCase() }),
-    Organization.findOne({ contractAddress: from.toLowerCase() }),
-  ]);
+  // Same reasoning as the listener: an unidentified log cannot be told apart
+  // from its siblings, and the indexer will pick it up with a real index.
+  if (typeof log.logIndex !== "number") return { recorded: false };
 
-  // Always record cNGN transfers so history-by-address remains accurate even if
-  // the DB was wiped and user/org records are temporarily missing.
-
-  let type: "send" | "receive" | "payroll";
-  if (org) {
-    type = "payroll";
-  } else if (fromUser) {
-    type = "send";
-  } else {
-    type = toUser ? "receive" : "send";
-  }
+  // Same classifier the indexer uses, so a transfer is typed identically no
+  // matter which path saw it first.
+  const { type, organizationId } = await BankingService.classifyTransfer(from);
 
   await BankingService.recordTransaction({
     txHash,
@@ -192,15 +182,13 @@ const recordCngnTransferIfRelevant = async (log: ParsedLog) => {
     toAddress: to,
     amount,
     blockNumber: log.blockNumber,
-    organizationId: org ? String(org._id) : undefined,
+    organizationId,
   });
 
   return { recorded: true };
 };
 
 export const alchemyWebhook = asyncHandler(async (req: Request, res: Response) => {
-  await connectDB();
-
   const signature = req.get("X-Alchemy-Signature") || undefined;
   const signingKey = process.env.ALCHEMY_WEBHOOK_SIGNING_KEY;
 

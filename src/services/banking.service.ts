@@ -1,123 +1,206 @@
 import { ethers } from "ethers";
-import { Transaction, ITransaction } from "../models/Transaction.model.js";
-import { User } from "../models/User.model.js";
-import { TransactionData, TransactionFilter } from "../types/transaction.types.js";
-import { cNGNContract } from "../config/blockchain.js";
+import { and, count, desc, eq, gte, lte, or, sql } from "drizzle-orm";
 import crypto from "node:crypto";
-import mongoose from "mongoose";
-import { Organization } from "../models/Organization.model.js";
+import { db } from "../db/client.js";
+import { organizations, transactions, users } from "../db/schema.js";
+import type { Transaction } from "../db/types.js";
+import {
+  ChartBucket,
+  TransactionData,
+  TransactionFilter,
+  TransactionRange,
+} from "../types/transaction.types.js";
+import { getBlockDate } from "../utils/blockTime.util.js";
+import { BalanceService } from "./balance.service.js";
+import { TokenService } from "./token.service.js";
 
 export class BankingService {
   /**
-   * Record a transaction from blockchain
+   * Classify a transfer independently of who is viewing it. Per-viewer
+   * direction ("sent"/"received") is derived in the read layer instead, so a
+   * single global row stays correct for both counterparties.
    */
-  static async recordTransaction(data: TransactionData): Promise<ITransaction> {
-    // Check if transaction already exists
-    const existing = await Transaction.findOne(
-      data.logIndex === undefined
-        ? { txHash: data.txHash }
-        : { txHash: data.txHash, logIndex: data.logIndex }
-    );
-    if (existing) {
-      const shouldUpdate =
-        (!existing.fee && data.fee) ||
-        (!existing.gasUsed && data.gasUsed) ||
-        (!existing.blockNumber && data.blockNumber);
+  static async classifyTransfer(fromAddress: string): Promise<{
+    type: "send" | "payroll";
+    organizationId?: string;
+  }> {
+    const [organization] = await db
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(eq(organizations.contractAddress, fromAddress.toLowerCase()))
+      .limit(1);
 
-      if (shouldUpdate) {
-        existing.fee = existing.fee || data.fee;
-        existing.gasUsed = existing.gasUsed || data.gasUsed;
-        existing.blockNumber = existing.blockNumber || data.blockNumber;
-        await existing.save();
-      }
-      return existing;
+    if (organization) {
+      return { type: "payroll", organizationId: organization.id };
     }
 
-    // Get user IDs if they exist
-    const [fromUser, toUser] = await Promise.all([
-      User.findOne({ walletAddress: data.fromAddress.toLowerCase() }),
-      User.findOne({ walletAddress: data.toAddress.toLowerCase() }),
+    return { type: "send" };
+  }
+
+  static async recordTransaction(data: TransactionData): Promise<Transaction> {
+    const txHash = data.txHash.toLowerCase();
+    const fromAddress = data.fromAddress.toLowerCase();
+    const toAddress = data.toAddress.toLowerCase();
+    const logIndex = data.logIndex;
+
+    const [fromUser, toUser, blockDate, token] = await Promise.all([
+      db.select({ id: users.id }).from(users).where(eq(users.walletAddress, fromAddress)).limit(1),
+      db.select({ id: users.id }).from(users).where(eq(users.walletAddress, toAddress)).limit(1),
+      getBlockDate(data.blockNumber),
+      TokenService.getDefault(),
     ]);
 
-    // Generate reference number
-    const reference = `TXN${Date.now()}${crypto
-      .randomBytes(3)
-      .toString("hex")
-      .toUpperCase()}`;
+    // Block time, not insert time. Otherwise every backfilled row collapses to
+    // "indexed just now" and time-range queries stop meaning anything.
+    const timestamp = blockDate ?? new Date();
 
-    // Create transaction
-    const transaction = await Transaction.create({
-      ...data,
-      fromAddress: data.fromAddress.toLowerCase(),
-      toAddress: data.toAddress.toLowerCase(),
-      fromUserId: fromUser?._id,
-      toUserId: toUser?._id,
-      reference,
-      currency: "cNGN",
-      fee: data.fee,
-      gasUsed: data.gasUsed,
-      status: "confirmed",
-      timestamp: new Date(),
-      confirmedAt: new Date(),
-    });
+    // One statement, no read-then-write race. COALESCE keeps whatever is
+    // already stored and only fills gaps, so a webhook that landed first is
+    // never clobbered by a later pass with less detail.
+    const [row] = await db
+      .insert(transactions)
+      .values({
+        txHash,
+        logIndex,
+        type: data.type,
+        fromAddress,
+        toAddress,
+        fromUserId: fromUser[0]?.id,
+        toUserId: toUser[0]?.id,
+        amount: data.amount,
+        tokenId: token.id,
+        currency: data.currency || token.symbol,
+        fee: data.fee,
+        gasUsed: data.gasUsed,
+        description: data.description,
+        memo: data.memo,
+        category: data.category,
+        qrCode: data.qrCode,
+        merchantName: data.merchantName,
+        batchId: data.batchId,
+        batchName: data.batchName,
+        organizationId: data.organizationId,
+        blockNumber: data.blockNumber,
+        status: data.status || "confirmed",
+        timestamp,
+        confirmedAt: timestamp,
+        reference: `TXN${Date.now()}${crypto.randomBytes(3).toString("hex").toUpperCase()}`,
+        bankAccountNumber: data.bankDetails?.accountNumber,
+        bankName: data.bankDetails?.bankName,
+        bankAccountName: data.bankDetails?.accountName,
+      })
+      .onConflictDoUpdate({
+        target: [transactions.txHash, transactions.logIndex],
+        set: {
+          fee: sql`coalesce(${transactions.fee}, excluded.fee)`,
+          gasUsed: sql`coalesce(${transactions.gasUsed}, excluded.gas_used)`,
+          blockNumber: sql`coalesce(${transactions.blockNumber}, excluded.block_number)`,
+          organizationId: sql`coalesce(${transactions.organizationId}, excluded.organization_id)`,
+          fromUserId: sql`coalesce(${transactions.fromUserId}, excluded.from_user_id)`,
+          toUserId: sql`coalesce(${transactions.toUserId}, excluded.to_user_id)`,
+          // Repair rows written before a block timestamp could be resolved.
+          timestamp: sql`excluded.timestamp`,
+          confirmedAt: sql`excluded.confirmed_at`,
+          updatedAt: new Date(),
+        },
+      })
+      .returning();
 
-    return transaction;
+    if (!row) throw new Error(`Failed to record transaction ${txHash}`);
+    return row;
   }
 
   /**
-   * Get transaction history with filters and pagination
+   * Translate a named range into a start date. Returns undefined for "all" so
+   * the caller leaves the timestamp bound off entirely.
    */
+  static resolveRangeStart(range?: TransactionRange): Date | undefined {
+    if (!range || range === "all") return undefined;
+
+    const MS = {
+      "1h": 3_600_000,
+      "24h": 86_400_000,
+      "7d": 604_800_000,
+      "30d": 2_592_000_000,
+      "90d": 7_776_000_000,
+      "1y": 31_536_000_000,
+    } as const;
+
+    const span = MS[range];
+    return span ? new Date(Date.now() - span) : undefined;
+  }
+
+  /**
+   * Shared predicate so history, summary and chart never drift apart on which
+   * rows they consider.
+   */
+  private static buildWhere(walletAddress: string, filters: TransactionFilter) {
+    const wallet = walletAddress.toLowerCase();
+    const { type, category, endDate, status = "confirmed", range } = filters;
+
+    const clauses = [
+      or(eq(transactions.fromAddress, wallet), eq(transactions.toAddress, wallet)),
+      eq(transactions.status, status),
+    ];
+
+    if (type) clauses.push(eq(transactions.type, type));
+    if (category) clauses.push(eq(transactions.category, category));
+
+    // An explicit startDate wins over the coarser named range.
+    const startDate = filters.startDate ?? this.resolveRangeStart(range);
+    if (startDate) clauses.push(gte(transactions.timestamp, startDate));
+    if (endDate) clauses.push(lte(transactions.timestamp, endDate));
+
+    return and(...clauses);
+  }
+
   static async getTransactionHistory(
     walletAddress: string,
     filters: TransactionFilter = {}
   ) {
-    const {
-      page = 1,
-      limit = 50,
-      type,
-      category,
-      startDate,
-      endDate,
-      status = "confirmed",
-    } = filters;
+    const { page = 1, limit = 50 } = filters;
+    const wallet = walletAddress.toLowerCase();
+    const where = this.buildWhere(wallet, filters);
 
-    const query: any = {
-      $or: [
-        { fromAddress: walletAddress.toLowerCase() },
-        { toAddress: walletAddress.toLowerCase() },
-      ],
-      status,
-    };
+    const [rows, [totals]] = await Promise.all([
+      db
+        .select({
+          transaction: transactions,
+          fromUsername: sql<string | null>`from_user.username`,
+          fromFullName: sql<string | null>`from_user.full_name`,
+          toUsername: sql<string | null>`to_user.username`,
+          toFullName: sql<string | null>`to_user.full_name`,
+        })
+        .from(transactions)
+        .leftJoin(sql`${users} as from_user`, sql`from_user.id = ${transactions.fromUserId}`)
+        .leftJoin(sql`${users} as to_user`, sql`to_user.id = ${transactions.toUserId}`)
+        .where(where)
+        .orderBy(desc(transactions.timestamp))
+        .limit(limit)
+        .offset((page - 1) * limit),
+      db.select({ total: count() }).from(transactions).where(where),
+    ]);
 
-    if (type) query.type = type;
-    if (category) query.category = category;
-    if (startDate || endDate) {
-      query.timestamp = {};
-      if (startDate) query.timestamp.$gte = startDate;
-      if (endDate) query.timestamp.$lte = endDate;
-    }
+    const total = totals?.total ?? 0;
 
-    const transactions = await Transaction.find(query)
-      .sort({ timestamp: -1 })
-      .skip((page - 1) * limit)
-      .limit(limit)
-      .populate("fromUserId toUserId", "username fullName")
-      .lean();
+    const { decimals } = await TokenService.getDefault();
 
-    const total = await Transaction.countDocuments(query);
+    const formatted = rows.map(({ transaction, ...names }) => {
+      const isOutgoing = transaction.fromAddress === wallet;
+      const amount = ethers.formatUnits(transaction.amount, decimals);
 
-    // Format transactions with direction
-    const formatted = transactions.map((tx) => ({
-      ...tx,
-      direction:
-        tx.fromAddress === walletAddress.toLowerCase() ? "sent" : "received",
-      displayAmount:
-        tx.fromAddress === walletAddress.toLowerCase()
-          ? `-${ethers.formatUnits(tx.amount, 6)}`
-          : `+${ethers.formatUnits(tx.amount, 6)}`,
-      fee: tx.fee,
-      gasUsed: tx.gasUsed,
-    }));
+      return {
+        ...transaction,
+        fromUser: names.fromUsername
+          ? { username: names.fromUsername, fullName: names.fromFullName }
+          : null,
+        toUser: names.toUsername
+          ? { username: names.toUsername, fullName: names.toFullName }
+          : null,
+        direction: isOutgoing ? "sent" : "received",
+        displayAmount: `${isOutgoing ? "-" : "+"}${amount}`,
+      };
+    });
 
     return {
       transactions: formatted,
@@ -125,220 +208,149 @@ export class BankingService {
         page,
         limit,
         total,
-        totalPages: Math.ceil(total / limit),
+        totalPages: Math.ceil(total / limit) || 1,
         hasMore: page * limit < total,
       },
     };
   }
 
   /**
-   * Get aggregated transaction totals for a wallet.
-   * Totals are computed server-side (Mongo aggregation) for fast UX and correctness.
+   * Aggregated totals. numeric(78,0) sums uint256 exactly, so unlike the old
+   * Decimal128 path there is no parsing or truncation on the way out.
    */
   static async getTransactionSummary(
     walletAddress: string,
     filters: TransactionFilter = {}
   ) {
-    const {
-      type,
-      category,
-      startDate,
-      endDate,
-      status = "confirmed",
-    } = filters;
+    const wallet = walletAddress.toLowerCase();
+    const { status = "confirmed" } = filters;
 
-    const walletLower = walletAddress.toLowerCase();
+    const [result] = await db
+      .select({
+        totalCount: count(),
+        inflowCount: sql<number>`count(*) filter (where ${transactions.toAddress} = ${wallet})::int`,
+        outflowCount: sql<number>`count(*) filter (where ${transactions.fromAddress} = ${wallet})::int`,
+        inflowRaw: sql<string>`coalesce(sum(${transactions.amount}) filter (where ${transactions.toAddress} = ${wallet}), 0)::text`,
+        outflowRaw: sql<string>`coalesce(sum(${transactions.amount}) filter (where ${transactions.fromAddress} = ${wallet}), 0)::text`,
+      })
+      .from(transactions)
+      .where(this.buildWhere(wallet, filters));
 
-    const match: any = {
-      $or: [{ fromAddress: walletLower }, { toAddress: walletLower }],
-      status,
-    };
-
-    if (type) match.type = type;
-    if (category) match.category = category;
-    if (startDate || endDate) {
-      match.timestamp = {};
-      if (startDate) match.timestamp.$gte = startDate;
-      if (endDate) match.timestamp.$lte = endDate;
-    }
-
-    const [result] = await Transaction.aggregate([
-      { $match: match },
-      {
-        $group: {
-          _id: null,
-          totalCount: { $sum: 1 },
-          inflowCount: {
-            $sum: {
-              $cond: [{ $eq: ["$toAddress", walletLower] }, 1, 0],
-            },
-          },
-          outflowCount: {
-            $sum: {
-              $cond: [{ $eq: ["$fromAddress", walletLower] }, 1, 0],
-            },
-          },
-          inflowAmountRaw: {
-            $sum: {
-              $cond: [
-                { $eq: ["$toAddress", walletLower] },
-                { $toDecimal: "$amount" },
-                0,
-              ],
-            },
-          },
-          outflowAmountRaw: {
-            $sum: {
-              $cond: [
-                { $eq: ["$fromAddress", walletLower] },
-                { $toDecimal: "$amount" },
-                0,
-              ],
-            },
-          },
-        },
-      },
-    ]);
-
-    const inflowRaw = result?.inflowAmountRaw?.toString?.() ?? "0";
-    const outflowRaw = result?.outflowAmountRaw?.toString?.() ?? "0";
-
-    const inflowAmount = ethers.formatUnits(BigInt(inflowRaw.split(".")[0] || "0"), 6);
-    const outflowAmount = ethers.formatUnits(BigInt(outflowRaw.split(".")[0] || "0"), 6);
+    const inflowRaw = result?.inflowRaw ?? "0";
+    const outflowRaw = result?.outflowRaw ?? "0";
+    const { decimals } = await TokenService.getDefault();
 
     return {
-      walletAddress: walletLower,
+      walletAddress: wallet,
       status,
       totalCount: result?.totalCount ?? 0,
       inflowCount: result?.inflowCount ?? 0,
       outflowCount: result?.outflowCount ?? 0,
-      inflowAmount,
-      outflowAmount,
+      inflowAmount: ethers.formatUnits(inflowRaw, decimals),
+      outflowAmount: ethers.formatUnits(outflowRaw, decimals),
       inflowAmountRaw: inflowRaw,
       outflowAmountRaw: outflowRaw,
     };
   }
 
   /**
-   * Get balance from blockchain
+   * Bucketed inflow/outflow for charting.
+   *
+   * generate_series produces the buckets, so a month with no activity comes
+   * back as zero instead of being missing from the series. The old aggregation
+   * only returned buckets that had rows, which made the chart skip quiet
+   * periods entirely.
    */
-  static async getBalance(walletAddress: string): Promise<string> {
-    const balance = await cNGNContract.balanceOf(walletAddress);
-    return ethers.formatUnits(balance, 6);
+  static async getTransactionChart(
+    walletAddress: string,
+    filters: TransactionFilter = {},
+    bucket: ChartBucket = "month"
+  ) {
+    const wallet = walletAddress.toLowerCase();
+    const end = filters.endDate ?? new Date();
+    const { decimals } = await TokenService.getDefault();
+
+    // With no bound, "all" means all: start at this address's first
+    // transaction rather than silently capping the series at a year.
+    let start = filters.startDate ?? this.resolveRangeStart(filters.range);
+    if (!start) {
+      const [earliest] = await db
+        .select({ first: sql<string | null>`min(${transactions.timestamp})::text` })
+        .from(transactions)
+        .where(this.buildWhere(wallet, { ...filters, range: "all" }));
+
+      // Aggregates come back as text rather than a driver-parsed Date.
+      start = earliest?.first ? new Date(earliest.first) : end;
+    }
+
+    // bucket lands in sql.raw, so re-check it here rather than trusting every
+    // caller to have validated it upstream.
+    const safeBucket: ChartBucket = (["hour", "day", "week", "month"] as const).includes(
+      bucket
+    )
+      ? bucket
+      : "month";
+
+    const step = sql.raw(`'1 ${safeBucket}'::interval`);
+    const unit = sql.raw(`'${safeBucket}'`);
+
+    const rows = await db.execute<{
+      bucket_start: Date;
+      inflow: string;
+      outflow: string;
+      tx_count: number;
+    }>(sql`
+      select
+        b.bucket_start,
+        coalesce(sum(t.amount) filter (where t.to_address = ${wallet}), 0)::text as inflow,
+        coalesce(sum(t.amount) filter (where t.from_address = ${wallet}), 0)::text as outflow,
+        count(t.id)::int as tx_count
+      from generate_series(
+        date_trunc(${unit}, ${start.toISOString()}::timestamptz),
+        date_trunc(${unit}, ${end.toISOString()}::timestamptz),
+        ${step}
+      ) as b(bucket_start)
+      left join ${transactions} t
+        on date_trunc(${unit}, t.timestamp) = b.bucket_start
+       and t.status = 'confirmed'
+       and (t.from_address = ${wallet} or t.to_address = ${wallet})
+      group by b.bucket_start
+      order by b.bucket_start
+    `);
+
+    return {
+      walletAddress: wallet,
+      bucket: safeBucket,
+      range: filters.range ?? "all",
+      points: rows.map((row) => ({
+        bucketStart: row.bucket_start,
+        // Numbers, not strings, because this feeds a chart axis. Safe only
+        // because formatUnits has already scaled it down: never parse a raw
+        // base-unit value this way.
+        incoming: Number.parseFloat(ethers.formatUnits(row.inflow, decimals)),
+        outgoing: Number.parseFloat(ethers.formatUnits(row.outflow, decimals)),
+        incomingRaw: row.inflow,
+        outgoingRaw: row.outflow,
+        count: row.tx_count,
+      })),
+    };
   }
 
   /**
-   * Get wallet summary (balance + recent activity)
+   * Balance, served from the cached row rather than a fresh `balanceOf` on
+   * every request.
    */
+  static async getBalance(walletAddress: string): Promise<string> {
+    const { formatted } = await BalanceService.get(walletAddress);
+    return formatted;
+  }
+
   static async getWalletSummary(walletAddress: string) {
     const [balance, history] = await Promise.all([
       this.getBalance(walletAddress),
       this.getTransactionHistory(walletAddress, { limit: 10 }),
-      User.findOne({ walletAddress: walletAddress.toLowerCase() }),
     ]);
 
-    return {
-      balance,
-      recentTransactions: history.transactions
-    };
-  }
-
-  /**
-   * Sync historical transactions for a user
-   */
-  static async syncUserHistory(walletAddress: string, fromBlock: number = 0) {
-    const normalized = walletAddress.toLowerCase();
-
-    const getTxTypeAndOrganizationId = async (
-      fromAddress: string
-    ): Promise<{ type: "send" | "receive" | "payroll"; organizationId?: string }> => {
-      const organization = await Organization.findOne({
-        contractAddress: fromAddress.toLowerCase(),
-      });
-
-      if (organization) {
-        return {
-          type: "payroll",
-          organizationId: (organization._id as mongoose.Types.ObjectId).toString(),
-        };
-      }
-
-      if (fromAddress.toLowerCase() === normalized) {
-        return { type: "send" };
-      }
-
-      return { type: "receive" };
-    };
-
-    const sentFilter = cNGNContract.filters.Transfer(walletAddress, null);
-    const receivedFilter = cNGNContract.filters.Transfer(null, walletAddress);
-
-    const [sentEvents, receivedEvents] = await Promise.all([
-      cNGNContract.queryFilter(sentFilter, fromBlock, "latest"),
-      cNGNContract.queryFilter(receivedFilter, fromBlock, "latest"),
-    ]);
-
-    const allEvents = [...sentEvents, ...receivedEvents]
-      .filter(
-        (event, index, self) =>
-          index ===
-          self.findIndex((e) => e.transactionHash === event.transactionHash)
-      )
-      .sort((a, b) => a.blockNumber - b.blockNumber);
-
-    let synced = 0;
-    let skipped = 0;
-
-    for (const event of allEvents) {
-      try {
-        const parsedLog = cNGNContract.interface.parseLog({
-          topics: [...event.topics],
-          data: event.data,
-        });
-
-        if (!parsedLog) {
-          skipped++;
-          continue;
-        }
-
-        const from = parsedLog.args[0];
-        const to = parsedLog.args[1];
-        const value = parsedLog.args[2];
-
-        const tx = await event.getTransaction();
-        const receipt = await event.getTransactionReceipt();
-        const { type, organizationId } = await getTxTypeAndOrganizationId(from);
-
-        const effectiveGasPrice =
-          (receipt as any)?.effectiveGasPrice ?? (tx as any)?.gasPrice;
-        const gasUsed = (receipt as any)?.gasUsed;
-        const fee =
-          effectiveGasPrice && gasUsed
-            ? (BigInt(effectiveGasPrice.toString()) * BigInt(gasUsed.toString())).toString()
-            : undefined;
-
-        await BankingService.recordTransaction({
-          txHash: event.transactionHash,
-          type,
-          fromAddress: from,
-          toAddress: to,
-          amount: value.toString(),
-          blockNumber: receipt.blockNumber,
-          fee,
-          gasUsed: gasUsed ? gasUsed.toString() : undefined,
-          organizationId,
-        });
-
-        synced++;
-      } catch (error: any) {
-        if (error?.message?.includes("duplicate")) {
-          skipped++;
-          continue;
-        }
-        skipped++;
-      }
-    }
-
-    return { walletAddress, fromBlock, total: allEvents.length, synced, skipped };
+    return { balance, recentTransactions: history.transactions };
   }
 }
