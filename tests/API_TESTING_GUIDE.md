@@ -1,906 +1,239 @@
-# 🧪 Dizburza API Testing Guide
+# Testing the Dizburza API
 
-Complete guide for testing all API endpoints using Thunder Client (or any REST client).
+There are two things here. `npm test` is the automated suite; `api-tests.http`
+is for poking at the API by hand.
 
----
-
-## 🚀 Setup
-
-**Base URL:** `http://localhost:5000/api`
-
-**Prerequisites:**
-- Backend server running on port 5000
-- MongoDB connected
-- Valid wallet addresses for testing
-
----
-
-## 📝 Test Sequence
-
-### **TEST 1: Health Check** ✅
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/health`
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "message": "Server is running",
-  "timestamp": "2025-01-15T..."
-}
-```
-
----
-
-### **TEST 2: Register User** 👤
-
-**Method:** `POST`  
-**URL:** `http://localhost:5000/api/auth/register`
-
-**Headers:**
-```
-Content-Type: application/json
-```
-
-**Body:**
-```json
-{
-  "walletAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
-  "surname": "Doe",
-  "firstname": "John",
-  "email": "john@example.com",
-  "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=John"
-}
-```
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "user": {
-      "username": "doe_john_742d35",
-      "walletAddress": "0x742d35cc6634c0532925a3b844bc9e7595f0beb1",
-      "fullName": "John Doe",
-      "role": "employee"
-    },
-    "token": "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...",
-    "redirectTo": "/wallet"
-  },
-  "message": "User registered successfully"
-}
-```
-
-**📝 Important:** Copy the `token` - you'll need it for authenticated requests!
-
----
-
-### **TEST 3: Get My Profile** 🔐
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/auth/me`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_TOKEN_HERE
-```
-
-> Replace `YOUR_TOKEN_HERE` with the token from TEST 2
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "user": {
-      "username": "doe_john_742d35",
-      "fullName": "John Doe",
-      "walletAddress": "0x742d35cc6634c0532925a3b844bc9e7595f0beb1",
-      "email": "john@example.com",
-      "role": "employee",
-      "organizationId": null
-    }
-  }
-}
-```
-
----
-
-### **TEST 4: Check User Status**
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/auth/check/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1`
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "isRegistered": true,
-    "redirectTo": "/wallet",
-    "user": { ... }
-  }
-}
-```
-
----
-
-### **TEST 5: Get Auth Message**
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/auth/message/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1`
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "message": "Welcome to Dizburza!\n\nSign this message to authenticate..."
-  }
-}
-```
-
----
-
-### **TEST 6: Get Wallet Balance**
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/wallet/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1/balance`
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "address": "0x742d35cc6634c0532925a3b844bc9e7595f0beb1",
-    "balance": "0.0",
-    "currency": "cNGN"
-  }
-}
-```
-
----
-
-### **TEST 7: Get Wallet Summary**
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/wallet/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1/summary`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_TOKEN_HERE
-```
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "balance": "0.0",
-    "recentTransactions": [],
-    "monthlyAnalytics": null
-  }
-}
-```
-
----
-
-### **TEST 8: Get Transaction History**
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/transactions/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1?page=1&limit=10`
-
-**Query Parameters:**
-- `page` (optional): Page number (default: 1)
-- `limit` (optional): Results per page (default: 50)
-- `type` (optional): Filter by type (send, receive, payroll, etc.)
-- `category` (optional): Filter by category
-- `status` (optional): Filter by status
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "transactions": [],
-    "pagination": {
-      "page": 1,
-      "limit": 10,
-      "total": 0,
-      "totalPages": 0,
-      "hasMore": false
-    }
-  }
-}
-```
-
----
-
-### **TEST 9: Create Organization** 🏢
-
-**Method:** `POST`  
-**URL:** `http://localhost:5000/api/organizations`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_TOKEN_HERE
-Content-Type: application/json
-```
-
-**Body:**
-```json
-{
-  "name": "Tech Innovations Ltd",
-  "contractAddress": "0x1234567890abcdef1234567890abcdef12345678",
-  "creatorAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
-  "businessEmail": "info@techinnovations.com",
-  "businessInfo": {
-    "registrationNumber": "RC123456",
-    "registrationType": "Limited Liability Company (Ltd)"
-  },
-  "signers": [
-    {
-      "address": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
-      "name": "John Doe",
-      "role": "CEO"
-    }
-  ],
-  "quorum": 1,
-  "metadata": {
-    "industry": "Information Technology",
-    "size": "11-50",
-    "description": "A leading tech company"
-  }
-}
-```
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "_id": "507f1f77bcf86cd799439011",
-    "name": "Tech Innovations Ltd",
-    "slug": "tech-innovations-ltd",
-    "contractAddress": "0x1234567890abcdef1234567890abcdef12345678",
-    "creatorAddress": "0x742d35cc6634c0532925a3b844bc9e7595f0beb1",
-    "businessEmail": "info@techinnovations.com",
-    "signers": [...],
-    "quorum": 1
-  },
-  "message": "Organization created successfully"
-}
-```
-
-**📝 Important:** 
-- Copy the `_id` - you'll need it for employee management and payroll!
-- Your user's role is now automatically updated to "signer"
-- Re-login to get a new token with the signer role
-
----
-
-### **TEST 10: Get All Organizations**
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/organizations`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_TOKEN_HERE
-```
-
----
-
-### **TEST 11: Get Organization by Slug**
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/organizations/slug/tech-innovations-ltd`
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "name": "Tech Innovations Ltd",
-    "slug": "tech-innovations-ltd",
-    "signers": [...],
-    "employees": [...],
-    "quorum": 1
-  }
-}
-```
-
----
-
-### **TEST 12: Register Employee User** 👤
-
-Before adding employees to an organization, they must be registered first.
-
-**Method:** `POST`  
-**URL:** `http://localhost:5000/api/auth/register`
-
-**Body:**
-```json
-{
-  "walletAddress": "0x9876543210fedcba9876543210fedcba98765432",
-  "surname": "Johnson",
-  "firstname": "Alice",
-  "email": "alice@example.com"
-}
-```
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "user": {
-      "username": "johnson_alice_987654",
-      "fullName": "Alice Johnson",
-      "role": "employee"
-    },
-    "token": "..."
-  }
-}
-```
-
-**📝 Copy the username** - you'll need it to add this user as an employee!
-
----
-
-### **TEST 13: Add Employee to Organization** 👥
-
-**Method:** `POST`  
-**URL:** `http://localhost:5000/api/organizations/507f1f77bcf86cd799439011/employees`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_SIGNER_TOKEN
-Content-Type: application/json
-```
-
-> ⚠️ **Important:** Use the signer's token, not the employee's token!
-
-**Body:**
-```json
-{
-  "username": "johnson_alice_987654",
-  "jobRole": "Senior Developer",
-  "salary": "5000000000",
-  "department": "Engineering", // optional
-  "employeeId": "EMP001" // optional
-}
-```
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "username": "johnson_alice_987654",
-    "fullName": "Alice Johnson",
-    "walletAddress": "0x9876543210fedcba9876543210fedcba98765432",
-    "email": "alice@example.com",
-    "organizationId": "507f1f77bcf86cd799439011",
-    "organizationSlug": "tech-innovations-ltd",
-    "jobDetails": {
-      "jobRole": "Senior Developer",
-      "salary": "5000000000",
-      "department": "Engineering",
-      "employeeId": "EMP001",
-      "joinedAt": "2025-01-15T..."
-    },
-    "role": "employee"
-  },
-  "message": "Employee added successfully"
-}
-```
-
-> **Note:** Amount is in smallest unit (6 decimals for cNGN). `5000000000` = 5,000 cNGN
-
----
-
-### **TEST 14: Get Organization Employees**
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/organizations/507f1f77bcf86cd799439011/employees`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_TOKEN_HERE
-```
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "organization": {
-      "name": "Tech Innovations Ltd",
-      "slug": "tech-innovations-ltd"
-    },
-    "employees": [
-      {
-        "_id": "...",
-        "username": "johnson_alice_987654",
-        "fullName": "Alice Johnson",
-        "surname": "Johnson",
-        "firstname": "Alice",
-        "walletAddress": "0x9876543210fedcba9876543210fedcba98765432",
-        "email": "alice@example.com",
-        "avatar": "...",
-        "jobDetails": {
-          "jobRole": "Senior Developer",
-          "salary": "5000000000",
-          "department": "Engineering",
-          "employeeId": "EMP001",
-          "joinedAt": "2025-01-15T..."
-        },
-        "role": "employee",
-        "createdAt": "2025-01-15T..."
-      }
-    ],
-    "totalEmployees": 1
-  }
-}
-```
-
----
-
-### **TEST 15: Update Employee Details**
-
-**Method:** `PATCH`  
-**URL:** `http://localhost:5000/api/organizations/507f1f77bcf86cd799439011/employees/johnson_alice_987654`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_SIGNER_TOKEN
-Content-Type: application/json
-```
-
-**Body:**
-```json
-{
-  "salary": "6000000000",
-  "jobRole": "Lead Developer",
-  "department": "Engineering"
-}
-```
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "username": "johnson_alice_987654",
-    "fullName": "Alice Johnson",
-    "jobDetails": {
-      "jobRole": "Lead Developer",
-      "salary": "6000000000",
-      "department": "Engineering",
-      "employeeId": "EMP001",
-      "joinedAt": "2025-01-15T..."
-    }
-  },
-  "message": "Employee updated successfully"
-}
-```
-
----
-
-### **TEST 16: Remove Employee from Organization**
-
-**Method:** `DELETE`  
-**URL:** `http://localhost:5000/api/organizations/507f1f77bcf86cd799439011/employees/johnson_alice_987654`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_SIGNER_TOKEN
-```
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "username": "johnson_alice_987654",
-    "fullName": "Alice Johnson",
-    "organizationId": null,
-    "organizationSlug": null,
-    "jobDetails": null,
-    "role": "employee"
-  },
-  "message": "Employee removed successfully"
-}
-```
-
----
-
-### **TEST 17: Create Batch Payroll** 💰
-
-**Method:** `POST`  
-**URL:** `http://localhost:5000/api/payroll/batches`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_SIGNER_TOKEN
-Content-Type: application/json
-```
-
-**Body:**
-```json
-{
-  "batchName": "january_2025_payroll",
-  "organizationId": "507f1f77bcf86cd799439011",
-  "organizationAddress": "0x1234567890abcdef1234567890abcdef12345678",
-  "creatorAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
-  "recipients": [
-    {
-      "walletAddress": "0x9876543210fedcba9876543210fedcba98765432",
-      "amount": "5000000000",
-      "employeeName": "Alice Johnson"
-    }
-  ]
-}
-```
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "batchName": "january_2025_payroll",
-    "organizationId": "507f1f77bcf86cd799439011",
-    "recipients": [...],
-    "totalAmount": "5000000000",
-    "quorumRequired": 1,
-    "status": "pending",
-    "approvalCount": 0,
-    "submittedAt": "2025-01-15T...",
-    "expiresAt": "2025-02-14T..."
-  },
-  "message": "Batch payroll recorded successfully"
-}
-```
-
----
-
-### **TEST 18: Get Batches for Organization**
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/payroll/organizations/507f1f77bcf86cd799439011/batches?status=pending`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_TOKEN_HERE
-```
-
-**Query Parameters (optional):**
-- `status`: Filter by status (pending, approved, executed, cancelled, expired)
-
----
-
-### **TEST 19: Get Batch Details**
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/payroll/batches/january_2025_payroll`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_TOKEN_HERE
-```
-
----
-
-### **TEST 20: Approve Batch**
-
-**Method:** `POST`  
-**URL:** `http://localhost:5000/api/payroll/batches/january_2025_payroll/approve`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_SIGNER_TOKEN
-Content-Type: application/json
-```
-
-**Body:**
-```json
-{
-  "signerAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
-  "signerName": "John Doe"
-}
-```
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "batchName": "january_2025_payroll",
-    "approvalCount": 1,
-    "status": "approved",
-    "approvals": [
-      {
-        "signerAddress": "0x742d35cc6634c0532925a3b844bc9e7595f0beb1",
-        "signerName": "John Doe",
-        "approvedAt": "2025-01-15T..."
-      }
-    ]
-  },
-  "message": "Batch approval recorded successfully"
-}
-```
-
----
-
-### **TEST 21: Execute Batch**
-
-**Method:** `POST`  
-**URL:** `http://localhost:5000/api/payroll/batches/january_2025_payroll/execute`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_SIGNER_TOKEN
-Content-Type: application/json
-```
-
-**Body:**
-```json
-{
-  "executorAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
-  "txHash": "0xdef456abc789def456abc789def456abc789def456abc789def456abc789def456" // optional
-}
-```
-
----
-
-### **TEST 22: Search User by Username** 🔍
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/users/search/johnson_alice_987654`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_TOKEN_HERE
-```
-
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "user": {
-      "username": "johnson_alice_987654",
-      "fullName": "Alice Johnson",
-      "walletAddress": "0x9876543210fedcba9876543210fedcba98765432",
-      "email": "alice@example.com",
-      "isAlreadySigner": false,
-      "currentOrganization": "tech-innovations-ltd"
-    },
-    "canBeAdded": true
-  }
-}
-```
-
----
-
-### **TEST 23: Suggest Usernames** 💡
-
-**Method:** `GET`  
-**URL:** `http://localhost:5000/api/users/suggest?query=john`
-
-**Headers:**
-```
-Authorization: Bearer YOUR_TOKEN_HERE
+```bash
+createdb dizburza_test
+TEST_DATABASE_URL=postgresql://localhost:5432/dizburza_test npm run test:setup
+TEST_DATABASE_URL=postgresql://localhost:5432/dizburza_test npm test
 ```
 
-**Expected Response:**
-```json
-{
-  "success": true,
-  "data": {
-    "suggestions": [
-      {
-        "username": "johnson_alice_987654",
-        "fullName": "Alice Johnson",
-        "avatar": "..."
-      },
-      {
-        "username": "doe_john_742d35",
-        "fullName": "John Doe",
-        "avatar": "..."
-      }
-    ]
-  }
-}
-```
-
----
-
-## 📋 Complete API Endpoints Reference
-
-### **Authentication**
-```
-POST   /auth/register          - Register new user
-POST   /auth/login             - Login with signature
-GET    /auth/check/:address    - Check user status
-GET    /auth/message/:address  - Get message to sign
-GET    /auth/me                - Get current user profile
-```
+It runs against a real Postgres, because most of what it asserts is enforced by
+the schema rather than by service code.
 
-### **Wallet**
-```
-GET    /wallet/:address/balance                 - Get balance
-GET    /wallet/:address/summary                 - Get wallet summary
-POST   /wallet/:address/sync                    - Sync transaction history
-```
+`api-tests.http` in this folder is the runnable-by-hand version. Open it in VS Code with
+the REST Client extension and click "Send Request" above any block. This file
+explains the parts a request list cannot.
 
-### **Transactions**
-```
-GET    /transactions/:address                   - Get transaction history
-POST   /transactions/record                     - Record new transaction
-```
+## Getting a session
 
-### **Organizations**
-```
-POST   /organizations                           - Create organization
-GET    /organizations                           - Get all organizations
-GET    /organizations/signer/:address           - Get org by signer
-GET    /organizations/creator/:address          - Get org by creator
-GET    /organizations/slug/:slug                - Get org by slug
-GET    /organizations/:id                       - Get org by ID
-POST   /organizations/:id/employees             - Add employee
-GET    /organizations/:id/employees             - Get all employees
-PATCH  /organizations/:id/employees/:username   - Update employee
-DELETE /organizations/:id/employees/:username   - Remove employee
-```
+Auth is an httpOnly session cookie, not a bearer token. The token is not in any
+response body, so there is nothing to copy into a variable.
 
-### **Payroll**
-```
-POST   /payroll/batches                         - Create batch
-POST   /payroll/batches/:name/approve           - Approve batch
-POST   /payroll/batches/:name/execute           - Execute batch
-POST   /payroll/batches/:name/cancel            - Cancel batch
-GET    /payroll/organizations/:id/batches       - Get org batches
-GET    /payroll/batches/:name                   - Get batch details
-```
+That leaves one step no HTTP client can do: signing. The login endpoint wants a
+secp256k1 signature over a nonce the server issued.
 
-### **Users**
-```
-GET    /users/search/:username                  - Search by username
-GET    /users/suggest?query=...                 - Auto-suggest usernames
-POST   /users/batch-lookup                      - Lookup multiple users
+```bash
+cd backend
+# .env needs:
+#   USER_PRIVATE_KEY=0x...
+#   USER_ADDRESS=0x...
+#   API_URL=http://localhost:5000
+npm run generateSignature
 ```
 
----
+It fetches the challenge, signs it and prints the signature. Paste that into the
+register or login request in `api-tests.http`.
 
-## 💡 Tips for Testing
+After that, REST Client keeps cookies between requests, so everything below the
+login block is authenticated with no extra headers. If a request 401s, check
+`rest-client.rememberCookiesForSubsequentRequests` is on. It is by default.
 
-### **Using Thunder Client (Free Version)**
+The nonce is consumed on use, so re-run the script per login, not per request.
 
-1. **Save important values in a text file:**
-   ```
-   Signer Token: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9...
-   Organization ID: 507f1f77bcf86cd799439011
-   Wallet Address: 0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1
-   Employee Username: johnson_alice_987654
-   ```
+`Authorization: Bearer <jwt>` still works, and the auth middleware keeps that
+path deliberately for scripts with no cookie jar. You just cannot obtain the
+token from an HTTP response any more.
 
-2. **Save Requests:**
-   After creating each request, click "Save" to reuse later
+## Things that will trip you up
 
-3. **Use History:**
-   Quickly re-run previous tests from the History tab
+**The auth rate limiter.** Five *failed* attempts per 15 minutes per IP, and a
+bad signature counts. Lock yourself out and the fix is restarting the API, since
+without `REDIS_URL` the counters live in process memory.
 
-4. **Organize by Feature:**
-   Group related tests (Auth, Organization, Employee, Payroll)
+**SSE is not testable here.** `GET /events/stream` holds the connection open
+forever, so REST Client hangs waiting for a response that never completes:
 
----
-
-### **Recommended Test Flow**
-
-```
-1. Health Check
-   ↓
-2. Register User (will be Signer)
-   ↓
-3. Get Profile (verify role is "employee")
-   ↓
-4. Create Organization (user becomes "signer")
-   ↓
-5. Re-login to get signer token
-   ↓
-6. Register Another User (will be Employee)
-   ↓
-7. Add User as Employee (with job details)
-   ↓
-8. Get Organization Employees (verify employee added)
-   ↓
-9. Create Batch Payroll
-   ↓
-10. Approve Batch
-   ↓
-11. Execute Batch
+```bash
+curl -N -b "dz_session=<cookie>" \
+  "http://localhost:5000/api/events/stream?addresses=0xYOUR_ADDRESS"
 ```
 
----
-
-### **Common Issues**
-
-**401 Unauthorized:**
-- Check if token is included in headers
-- Token might be expired (24h validity)
-- If you created an organization, re-login to get signer token
-
-**403 Insufficient Permissions:**
-- Verify you're using the signer's token for employee management
-- Check user's role with `/auth/me`
-- Only signers and admins can add/update/remove employees
-
-**404 Not Found:**
-- Verify the endpoint URL
-- Check if resource exists (organization ID, username, batch name)
-- Ensure MongoDB IDs are valid
-
-**400 Bad Request - Validation Failed:**
-- Check request body format
-- Ensure all required fields are included
-- Validate data types (strings, numbers, arrays)
-- For employees: username must exist (user must be registered)
-
-**Error: "User not found":**
-- Employee must be registered before adding to organization
-- Register the user first with `/auth/register`
-
----
-
-## 📊 Response Status Codes
-
-| Code | Meaning | Description |
-|------|---------|-------------|
-| 200 | OK | Request successful |
-| 201 | Created | Resource created successfully |
-| 400 | Bad Request | Invalid request data or validation failed |
-| 401 | Unauthorized | Authentication required or token invalid |
-| 403 | Forbidden | Insufficient permissions (not signer/admin) |
-| 404 | Not Found | Resource not found |
-| 500 | Server Error | Internal server error |
-
----
-
-## 🔐 Security Notes
-
-- Tokens expire after 24 hours
-- Always use HTTPS in production
-- Never commit tokens or secrets to git
-- Rotate tokens regularly
-- Only signers/admins can manage employees
-- Validate all input data
-
----
-
-## 📝 Notes on Employee Management
-
-### **Username-Based Addition**
-- Employees are added by `username`, not wallet address
-- This provides better UX and easier search
-- Username is automatically generated during registration
-
-### **Job Details Tracking**
-- `jobRole`: Position/title (e.g., "Senior Developer")
-- `salary`: In smallest unit (6 decimals)
-- `department`: Team or department name
-- `employeeId`: Company-specific employee ID
-- `joinedAt`: Automatically set when added
-
-### **Employee Lifecycle**
-1. User registers → Gets username
-2. Signer searches by username
-3. Signer adds employee with job details
-4. Employee can be updated (salary, role)
-5. Employee can be removed (returns to regular employee role)
-
----
-
-**Happy Testing! 🎉**
+You may only subscribe to your own wallet and the treasuries of organizations
+you belong to. Anything else is filtered out, and a request with nothing
+subscribable left returns 400.
+
+**CSRF only fires when it can see an origin.** The guard checks `Origin` or
+`Referer` when present and ignores the request when neither is, which is why
+ordinary REST Client calls pass and a browser on another site does not. Add an
+`Origin` header by hand to exercise the 403.
+
+**Amounts are human values, everywhere you send them.** Salaries, batch
+recipient amounts and proposal amounts are all scaled server side by the token's
+decimals. Sending pre-scaled base units silently overpays by a factor of
+10^decimals. Reading is the mirror image: `salaryFormatted` and
+`totalAmountFormatted` come back ready to render, so the client never needs to
+know the precision. Get decimals from `GET /token` if you are building a
+contract call, and never hardcode 6.
+
+**Ids are UUIDs.** Organizations, proposals and employees. Batches are addressed
+by `batchName` instead.
+
+## Authorization is per organization
+
+Organization, payroll and proposal routes check that you are an active signer or
+owner **of the organization in the path**, via `organization_members`. Signing
+in is not enough, and neither is signing for some other organization.
+
+Routes keyed by a wallet address (`/transactions/:address`, `/wallet/:address/*`,
+`/balances/:address`, `/organizations/signer/:address`, `/organizations/creator/:address`)
+allow your own address and the treasuries of organizations you sign for. Passing
+someone else's is 403, and passing any address without a session is 401. These
+were unauthenticated, and the transaction row carries bank details, memos and
+the counterparty's name, none of which is on chain.
+
+Expect 403 rather than 404 when you are not a member, including for an
+organization or batch that does not exist. Batch names are guessable, so
+confirming one exists would itself be a disclosure.
+
+This used to read a global `users.role` column instead, which was not membership
+at all: a genuine owner got 403 on their own organization, while anyone who
+passed `"role": "admin"` at registration got 200 on everyone else's employee
+list, salaries and wallet addresses included. Registration no longer accepts
+`role`, and `requireRole` is gone from these routes.
+
+## A working order
+
+1. `GET /health`, then `GET /token` to confirm the payroll token resolved. If
+   this fails, the RPC is unreachable and nothing that formats an amount will
+   work.
+2. `npm run generateSignature`, then register or log in.
+3. `GET /auth/me` to prove the cookie is being sent.
+4. Balances and transactions for your own address.
+5. Create an organization. Check the identifiers first: registration numbers and
+   TINs are unique platform-wide, and the check runs again immediately before
+   deployment because a deploy cannot be undone if the record is then rejected.
+6. Add employees, then batches, then proposals.
+
+Steps 5 and 6 need you to be a signer of that organization, which creating it makes you.
+
+## Endpoint reference
+
+Everything is under `/api`. Authenticated unless noted.
+
+### Public
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/health` | |
+| GET | `/token` | Payroll token address, symbol, decimals, logo |
+| GET | `/auth/check/:address` | `isRegistered` only, nothing else |
+| GET | `/auth/message/:address` | Sign-in challenge |
+| GET | `/organizations/slug/:slug` | Name and address only without a session |
+| POST | `/webhooks/alchemy` | Signature-verified, not called by hand |
+
+### Auth
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST | `/auth/register` | Signs you in. Rate limited |
+| POST | `/auth/login` | Needs a fresh nonce. Rate limited |
+| POST | `/auth/logout` | Clears the cookie |
+| GET | `/auth/me` | Profile, role, organization, memberships |
+
+### Wallet and transactions
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/balances/:address` | Own or a treasury you sign for |
+| GET | `/wallet/:address/balance` | |
+| GET | `/wallet/:address/summary` | |
+| GET | `/transactions/:address` | `page`, `limit` (max 100) |
+| GET | `/transactions/:address/summary` | |
+| GET | `/transactions/:address/chart` | `period` |
+| POST | `/transactions/watch` | Hash only |
+| POST | `/transactions/record` | Hash plus memo and category |
+
+### Organizations
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST | `/organizations` | |
+| GET | `/organizations` | Yours, not the platform |
+| GET | `/organizations/identifiers/available` | `registrationNumber`, `taxIdentificationNumber` |
+| GET | `/organizations/signer/:address` | Own address only, may be several |
+| GET | `/organizations/creator/:address` | Own address only |
+| GET | `/organizations/:id` | members only |
+| POST | `/organizations/:id/employees` | members only |
+| GET | `/organizations/:id/employees` | members only |
+| PATCH | `/organizations/:id/employees/:username` | members only |
+| DELETE | `/organizations/:id/employees/:username` | members only, soft |
+| GET | `/organizations/:id/employees/template` | members only |
+| POST | `/organizations/:id/employees/bulk` | members only |
+
+### Payroll
+
+All members only. These record what the contract did; they are not the authority.
+
+| Method | Path |
+| --- | --- |
+| POST | `/payroll/batches` |
+| GET | `/payroll/organizations/:id/batches` |
+| GET | `/payroll/batches/:batchName` |
+| POST | `/payroll/batches/:batchName/approve` |
+| POST | `/payroll/batches/:batchName/revoke` |
+| POST | `/payroll/batches/:batchName/execute` |
+| POST | `/payroll/batches/:batchName/cancel` |
+
+### Proposals
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| POST | `/proposals` | Signers only |
+| GET | `/proposals/organizations/:organizationId` | Signers only, `status` filter |
+| GET | `/proposals/:id` | Signers only, with votes and pending signers |
+| POST | `/proposals/:id/votes` | `for` or `against`, once per signer |
+| POST | `/proposals/:id/cancel` | Raiser only, while open |
+
+### Users
+
+Exact match only. There is no prefix search and no suggestion endpoint, by
+design. All rate limited to 20 a minute keyed by session.
+
+| Method | Path |
+| --- | --- |
+| GET | `/users/resolve/:username` |
+| GET | `/users/search/:username` |
+| GET | `/users/search-address/:address` |
+| POST | `/users/batch-lookup` |
+
+### Realtime
+
+| Method | Path | Notes |
+| --- | --- | --- |
+| GET | `/events/stream?addresses=` | SSE, use curl |
+
+## Status codes you should expect
+
+| Code | Meaning here |
+| --- | --- |
+| 400 | Validation, or no subscribable address on the stream |
+| 401 | No session, or an expired one |
+| 403 | Not a signer of that organization, or the CSRF origin check |
+| 409 | A uniqueness rule: second employer for one person, duplicate vote, registration number or TIN already taken |
+| 429 | Rate limited |
+
+409 is the interesting one. Those rules are database constraints rather than
+service checks, so a concurrent request cannot slip past them, and
+`isUniqueViolation` turns the violation into a 409 rather than a 500.
+
+## Removed endpoints
+
+If you are working from an older copy:
+
+* `GET /users/suggest` and `POST /users/resolve-addresses` are gone. They let
+  anyone walk the user base two characters at a time and come away with real
+  names and wallet addresses.
+* Bearer tokens in login responses are gone. The session is a cookie.
+* Mongo ids are gone. Everything is UUIDs.

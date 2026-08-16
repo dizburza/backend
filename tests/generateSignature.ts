@@ -4,7 +4,9 @@ import axios from "axios";
 
 dotenv.config();
 
-const API_URL = process.env.API_URL || "http://localhost:3000";
+// 5000 is the API. 3000 is the frontend, which was the old default and sent
+// every challenge request to the wrong process.
+const API_URL = process.env.API_URL || "http://localhost:5000";
 
 function validateEnv() {
   const requiredVars = ["USER_PRIVATE_KEY", "USER_ADDRESS"];
@@ -43,8 +45,9 @@ async function generateSignature(userAddress: string) {
   console.log("Signature:", signature);
   console.log("Signer Address:", wallet.address);
 
+  // The login endpoint takes the signature only. The message is printed above
+  // for eyeballing, but the server rebuilds it from its own stored challenge.
   return {
-    message: authMessage,
     signature,
     walletAddress: wallet.address,
   };

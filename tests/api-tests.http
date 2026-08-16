@@ -1,242 +1,441 @@
-@baseUrl = http://localhost:5050/api
+### Dizburza API
+###
+### Auth is an httpOnly session cookie, not a bearer token. The token is no
+### longer returned in any response body, so there is nothing to copy into a
+### variable. REST Client keeps cookies between requests
+### (rest-client.rememberCookiesForSubsequentRequests, on by default), so run
+### LOGIN once and everything below it is authenticated.
+###
+### The one step REST Client cannot do is sign. Run this first:
+###
+###   cd backend
+###   # .env needs USER_PRIVATE_KEY, USER_ADDRESS, API_URL=http://localhost:5000
+###   npm run generateSignature
+###
+### Paste the printed signature into the register or login request. The nonce is
+### consumed on use, so re-run the script per login, not per request.
+###
+### GET /events/stream is Server-Sent Events. REST Client will hang on it, since
+### it waits for a response that never ends. Use instead:
+###   curl -N -b "dz_session=<cookie>" "http://localhost:5000/api/events/stream?addresses=0x..."
 
-@signerAddress = 0xbf4EE65FE67C291DfC34ffe2455ecA9d97DF9148
-@employeeAddress = 0xb7B943fFbA78e33589971e630AD6EB544252D88C
+@baseUrl = http://localhost:5000/api
+@walletAddress = 0xYOUR_WALLET_ADDRESS
+@signature = 0xPASTE_FROM_generateSignature
 
-# Set these after running the register/login requests
-@token = YOUR_TOKEN_HERE
-@signerToken = YOUR_SIGNER_TOKEN_HERE
+# Filled in from responses as you go.
+@organizationId = 00000000-0000-0000-0000-000000000000
+@proposalId = 00000000-0000-0000-0000-000000000000
+@batchName = september-2026
+@employeeUsername = jane_doe
 
-# Set these after creating an organization / employee / payroll batch
-@organizationId = 507f1f77bcf86cd799439011
-@organizationSlug = tech-innovations-ltd
-@organizationContractAddress = 0x1234567890abcdef1234567890abcdef12345678
 
-@employeeUsername = johnson_alice_987654
-@batchName = january_2025_payroll
+###############################################################################
+### PUBLIC
+###############################################################################
 
-### TEST 1: Health Check
+### Health
 GET {{baseUrl}}/health
 
-### TEST 2: Register User (Signer-to-be)
+### The token this deployment pays in. Unauthenticated on purpose: it is the
+### same for everyone, and the browser needs `decimals` to build a contract
+### call. Never hardcode 6 anywhere against this.
+GET {{baseUrl}}/token
+
+### Has this wallet registered yet. Answers `isRegistered` and nothing more:
+### it is public, so it used to hand identity, employer and staff roster to
+### anyone who named an address. Profile data is on /auth/me now.
+GET {{baseUrl}}/auth/check/{{walletAddress}}
+
+### Organization by slug. Without a session this is name, slug and contract
+### address only. Signers get the staff roster and the paperwork.
+GET {{baseUrl}}/organizations/slug/acme-ltd
+
+
+###############################################################################
+### AUTH
+###############################################################################
+
+### 1. Challenge. Copy nothing by hand: `npm run generateSignature` does this
+### call itself and prints a signature over the message it returns.
+GET {{baseUrl}}/auth/message/{{walletAddress}}
+
+### 2a. REGISTER (first time only). Signs you in, so the response sets the
+### session cookie.
+# @name register
 POST {{baseUrl}}/auth/register
 Content-Type: application/json
 
 {
-  "walletAddress": "{{signerAddress}}",
+  "walletAddress": "{{walletAddress}}",
+  "signature": "{{signature}}",
   "surname": "Doe",
-  "firstname": "John",
-  "email": "john@example.com",
-  "avatar": "https://api.dicebear.com/7.x/avataaars/svg?seed=John"
+  "firstname": "Jane",
+  "email": "jane@example.com",
+  "username": "jane_doe"
 }
 
-### TEST 3: Get My Profile
-GET {{baseUrl}}/auth/me
-Authorization: Bearer {{token}}
-
-### TEST 4: Check User Status
-GET {{baseUrl}}/auth/check/{{signerAddress}}
-
-### TEST 5: Get Auth Message
-GET {{baseUrl}}/auth/message/{{signerAddress}}
-
-### (Optional) Login with signature
-# This endpoint exists in the API reference but is not fully specified in the guide.
-# Fill in the body fields to match your backend's expected payload.
+### 2b. LOGIN (every time after). Needs a fresh signature: the nonce from the
+### previous challenge is spent.
+# @name login
 POST {{baseUrl}}/auth/login
 Content-Type: application/json
 
 {
-  "walletAddress": "{{signerAddress}}",
-  "signature": "0xYOUR_SIGNATURE_HERE"
+  "walletAddress": "{{walletAddress}}",
+  "signature": "{{signature}}"
 }
 
-### TEST 6: Get Wallet Balance
-GET {{baseUrl}}/wallet/{{signerAddress}}/balance
+### The session's own view of itself: user, derived role, organization,
+### memberships. Also confirms the cookie is being sent. If this is 401, REST
+### Client is not keeping cookies: check
+### rest-client.rememberCookiesForSubsequentRequests.
+GET {{baseUrl}}/auth/me
 
-### TEST 7: Get Wallet Summary (Auth)
-GET {{baseUrl}}/wallet/{{signerAddress}}/summary
-Authorization: Bearer {{token}}
+### Clears the session cookie
+POST {{baseUrl}}/auth/logout
 
-### TEST 8: Get Transaction History
-GET {{baseUrl}}/transactions/{{signerAddress}}?page=1&limit=10
 
-### TEST 9: Create Organization (Auth: signer token after re-login)
-POST {{baseUrl}}/organizations
-Authorization: Bearer {{token}}
+###############################################################################
+### WALLET AND TRANSACTIONS
+###
+### All reads, no RPC from the caller. Amounts come back preformatted so the
+### client never needs to know the token's precision to render a figure.
+###
+### You may read your own address and the treasuries of organizations you sign
+### for. Anything else is 403, and no session is 401. The row carries bank
+### details, memos and the counterparty's name, which the chain does not.
+###############################################################################
+
+### Balance, served from Postgres rather than the chain
+GET {{baseUrl}}/balances/{{walletAddress}}
+
+### Same value through the wallet route
+GET {{baseUrl}}/wallet/{{walletAddress}}/balance
+
+### Totals in and out
+GET {{baseUrl}}/wallet/{{walletAddress}}/summary
+
+### History. page/limit, limit caps at 100.
+GET {{baseUrl}}/transactions/{{walletAddress}}?page=1&limit=20
+
+### Dashboard cards
+GET {{baseUrl}}/transactions/{{walletAddress}}/summary
+
+### Chart series
+GET {{baseUrl}}/transactions/{{walletAddress}}/chart?period=30d
+
+### Hand a just-submitted hash to the indexer and stop waiting on it. This is
+### the write path the UI uses: sign, apply locally, post the hash, close.
+POST {{baseUrl}}/transactions/watch
 Content-Type: application/json
 
 {
-  "name": "Tech Innovations Ltd",
-  "contractAddress": "{{organizationContractAddress}}",
-  "creatorAddress": "{{signerAddress}}",
-  "businessEmail": "info@techinnovations.com",
+  "txHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+}
+
+### Record with a memo. Only the hash is trusted: addresses, amount and
+### direction are decoded from the on-chain receipt, so a caller cannot assert
+### a transfer that never happened.
+POST {{baseUrl}}/transactions/record
+Content-Type: application/json
+
+{
+  "txHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "description": "Rent",
+  "category": "utilities"
+}
+
+
+###############################################################################
+### ORGANIZATIONS
+###
+### Every route below marked (members only) requires you to be an active signer
+### or owner of the organization in the path, checked against
+### organization_members. Signing for a different organization grants nothing
+### here. A non-member gets 403, and so does a missing organization or batch,
+### since confirming one exists would itself be a disclosure.
+###############################################################################
+
+### Are these identifiers free. Checked while the form is being filled in, and
+### again immediately before deployment, since a deploy cannot be undone if the
+### record is then rejected.
+GET {{baseUrl}}/organizations/identifiers/available?registrationNumber=RC1234567&taxIdentificationNumber=TIN12345678
+
+### Create. The contract is deployed by the browser first, so contractAddress
+### is already known here. quorum and the signer list are declared up front:
+### payroll stays inert until enough signers exist to reach quorum.
+# @name createOrganization
+POST {{baseUrl}}/organizations
+Content-Type: application/json
+
+{
+  "name": "Acme Ltd",
+  "contractAddress": "0x0000000000000000000000000000000000000000",
+  "organizationHash": "0x0000000000000000000000000000000000000000000000000000000000000000",
+  "businessEmail": "ops@acme.example",
+  "quorum": 2,
+  "signers": [
+    { "address": "{{walletAddress}}", "name": "Jane Doe", "role": "owner" },
+    { "address": "0x0000000000000000000000000000000000000001", "name": "John Roe", "role": "signer" }
+  ],
   "businessInfo": {
-    "registrationNumber": "RC123456",
+    "registrationNumber": "RC1234567",
+    "taxIdentificationNumber": "TIN12345678",
     "registrationType": "Limited Liability Company (Ltd)"
   },
-  "signers": [
-    {
-      "address": "{{signerAddress}}",
-      "name": "John Doe",
-      "role": "CEO"
-    }
-  ],
-  "quorum": 1,
   "metadata": {
-    "industry": "Information Technology",
+    "industry": "Finance",
     "size": "11-50",
-    "description": "A leading tech company"
+    "description": "Payroll pilot"
   }
 }
 
-### TEST 10: Get All Organizations (Auth)
+### Organizations you sign for. Not a platform directory.
 GET {{baseUrl}}/organizations
-Authorization: Bearer {{token}}
 
-### TEST 11: Get Organization by Slug
-GET {{baseUrl}}/organizations/slug/{{organizationSlug}}
+### Organizations this address signs for. Signing is uncapped, so this can be
+### more than one.
+GET {{baseUrl}}/organizations/signer/{{walletAddress}}
 
-### TEST 12: Register Employee User
-POST {{baseUrl}}/auth/register
-Content-Type: application/json
+### Organizations this address created
+GET {{baseUrl}}/organizations/creator/{{walletAddress}}
 
-{
-  "walletAddress": "{{employeeAddress}}",
-  "surname": "Johnson",
-  "firstname": "Alice",
-  "email": "alice@example.com"
-}
+### By id (members only)
+GET {{baseUrl}}/organizations/{{organizationId}}
 
-### TEST 13: Add Employee to Organization (Auth: signer token)
+
+###############################################################################
+### EMPLOYEES  (all members only)
+###
+### Employment is capped at one organization by a partial unique index, so
+### adding someone who already works elsewhere returns 409. Salary is sent as a
+### human amount: the server scales it by the token's decimals. Never pre-scale
+### it here.
+###############################################################################
+
+### Add by username, when the person already has an account
 POST {{baseUrl}}/organizations/{{organizationId}}/employees
-Authorization: Bearer {{signerToken}}
 Content-Type: application/json
 
 {
   "username": "{{employeeUsername}}",
-  "jobRole": "Senior Developer",
-  "salary": "5000000000",
+  "jobRole": "Engineer",
+  "salary": "450000",
   "department": "Engineering",
-  "employeeId": "EMP001"
+  "employeeId": "EMP-001"
 }
 
-### TEST 14: Get Organization Employees (Auth)
-GET {{baseUrl}}/organizations/{{organizationId}}/employees
-Authorization: Bearer {{token}}
-
-### TEST 15: Update Employee Details (Auth: signer token)
-PATCH {{baseUrl}}/organizations/{{organizationId}}/employees/{{employeeUsername}}
-Authorization: Bearer {{signerToken}}
+### Add by wallet, when they have not registered yet
+POST {{baseUrl}}/organizations/{{organizationId}}/employees
 Content-Type: application/json
 
 {
-  "salary": "6000000000",
-  "jobRole": "Lead Developer",
-  "department": "Engineering"
+  "walletAddress": "0x0000000000000000000000000000000000000002",
+  "surname": "Roe",
+  "firstname": "John",
+  "jobRole": "Designer",
+  "salary": "380000"
 }
 
-### TEST 16: Remove Employee from Organization (Auth: signer token)
-DELETE {{baseUrl}}/organizations/{{organizationId}}/employees/{{employeeUsername}}
-Authorization: Bearer {{signerToken}}
+### List. Returns `_id` and a `jobDetails` object, plus `salaryFormatted`.
+GET {{baseUrl}}/organizations/{{organizationId}}/employees
 
-### TEST 17: Create Batch Payroll (Auth: signer token)
+### Update terms. These live on the membership, so changing a salary cannot
+### leak into another organization's view of the same person.
+PATCH {{baseUrl}}/organizations/{{organizationId}}/employees/{{employeeUsername}}
+Content-Type: application/json
+
+{
+  "jobRole": "Senior Engineer",
+  "salary": "520000"
+}
+
+### Remove. Soft, so past payroll still resolves the name.
+DELETE {{baseUrl}}/organizations/{{organizationId}}/employees/{{employeeUsername}}
+
+### CSV template
+GET {{baseUrl}}/organizations/{{organizationId}}/employees/template
+
+### Bulk add
+POST {{baseUrl}}/organizations/{{organizationId}}/employees/bulk
+Content-Type: application/json
+
+{
+  "employees": [
+    { "walletAddress": "0x0000000000000000000000000000000000000003", "surname": "Ada", "firstname": "Grace", "jobRole": "Analyst", "salary": "300000" }
+  ]
+}
+
+
+###############################################################################
+### PAYROLL BATCHES  (members only)
+###
+### These endpoints record what happened on chain. They do not move money and
+### they are not the authority: quorum, the signer epoch and execution all live
+### in the contract. Batches are addressed by batchName, not by id.
+###############################################################################
+
+### Record a created batch. Amounts are human values, scaled server side.
 POST {{baseUrl}}/payroll/batches
-Authorization: Bearer {{signerToken}}
 Content-Type: application/json
 
 {
   "batchName": "{{batchName}}",
   "organizationId": "{{organizationId}}",
-  "organizationAddress": "{{organizationContractAddress}}",
-  "creatorAddress": "{{signerAddress}}",
+  "organizationAddress": "0x0000000000000000000000000000000000000000",
+  "creatorAddress": "{{walletAddress}}",
   "recipients": [
-    {
-      "walletAddress": "{{employeeAddress}}",
-      "amount": "5000000000",
-      "employeeName": "Alice Johnson"
-    }
-  ]
+    { "walletAddress": "0x0000000000000000000000000000000000000002", "amount": "450000", "employeeName": "John Roe" }
+  ],
+  "txHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
 }
 
-### TEST 18: Get Batches for Organization (Auth)
-GET {{baseUrl}}/payroll/organizations/{{organizationId}}/batches?status=pending
-Authorization: Bearer {{token}}
+### Batches for an organization
+GET {{baseUrl}}/payroll/organizations/{{organizationId}}/batches
 
-### TEST 19: Get Batch Details (Auth)
+### One batch. approvalCount is counted from the approvals table, never stored.
 GET {{baseUrl}}/payroll/batches/{{batchName}}
-Authorization: Bearer {{token}}
 
-### TEST 20: Approve Batch (Auth: signer token)
+### Record an approval
 POST {{baseUrl}}/payroll/batches/{{batchName}}/approve
-Authorization: Bearer {{signerToken}}
-Content-Type: application/json
 
-{
-  "signerAddress": "{{signerAddress}}",
-  "signerName": "John Doe"
-}
+### Record a withdrawn approval
+POST {{baseUrl}}/payroll/batches/{{batchName}}/revoke
 
-### TEST 21: Execute Batch (Auth: signer token)
+### Record execution
 POST {{baseUrl}}/payroll/batches/{{batchName}}/execute
-Authorization: Bearer {{signerToken}}
-Content-Type: application/json
 
-{
-  "executorAddress": "{{signerAddress}}",
-  "txHash": "0xdef456abc789def456abc789def456abc789def456abc789def456abc789def456"
-}
-
-### (Optional) Cancel Batch (Auth: signer token)
+### Record cancellation
 POST {{baseUrl}}/payroll/batches/{{batchName}}/cancel
-Authorization: Bearer {{signerToken}}
+
+
+###############################################################################
+### PROPOSALS
+###
+### A proposal records that the signers agreed to something, with an amount
+### attached. It never moves money: settling one is a payroll batch, which
+### carries its own quorum on chain.
+###
+### Quorum is snapshotted at creation, so changing the organization's quorum
+### mid-vote cannot retroactively pass or sink a proposal. Counts are derived
+### from the votes, never stored on the proposal.
+###############################################################################
+
+### Raise one. Only a signer of this organization may, enforced in the service.
+### `amount` is optional and is a human value.
+# @name createProposal
+POST {{baseUrl}}/proposals
 Content-Type: application/json
 
 {
-  "cancellerAddress": "{{signerAddress}}",
-  "reason": "Testing cancel flow"
+  "organizationId": "{{organizationId}}",
+  "title": "Q4 office move",
+  "description": "Relocating the Lagos office.",
+  "amount": "1500000",
+  "closesAt": "2026-09-30T17:00:00.000Z"
 }
 
-### TEST 22: Search User by Username (Auth)
+### List, with derived stats
+GET {{baseUrl}}/proposals/organizations/{{organizationId}}
+
+### Filter: open | passed | rejected | expired | cancelled
+GET {{baseUrl}}/proposals/organizations/{{organizationId}}?status=open
+
+### One proposal, with its votes and who has not voted yet
+GET {{baseUrl}}/proposals/{{proposalId}}
+
+### Vote. One per signer, enforced by a unique index, so a second attempt is a
+### 409 rather than a silent overwrite.
+POST {{baseUrl}}/proposals/{{proposalId}}/votes
+Content-Type: application/json
+
+{
+  "choice": "for",
+  "comment": "Agreed, the lease is up anyway."
+}
+
+### Against. Quorum against decides it early, and so does a quorum that has
+### become unreachable.
+POST {{baseUrl}}/proposals/{{proposalId}}/votes
+Content-Type: application/json
+
+{
+  "choice": "against"
+}
+
+### Withdraw. Only the signer who raised it, and only while open.
+POST {{baseUrl}}/proposals/{{proposalId}}/cancel
+
+
+###############################################################################
+### DIRECTORY LOOKUPS
+###
+### Authenticated, exact match, rate limited to 20 a minute keyed by session.
+### There is deliberately no prefix search and no suggestion endpoint: a
+### two-character query returning ten real names is how you walk an entire user
+### base from outside. A returned wallet address is a person's whole balance
+### and salary history, since the chain is public.
+###############################################################################
+
+### Username to wallet address, for paying someone by @username
+GET {{baseUrl}}/users/resolve/{{employeeUsername}}
+
+### Profile by exact username
 GET {{baseUrl}}/users/search/{{employeeUsername}}
-Authorization: Bearer {{token}}
 
-### TEST 23: Suggest Usernames (Auth)
-GET {{baseUrl}}/users/suggest?query=john
-Authorization: Bearer {{token}}
+### Profile by exact wallet address
+GET {{baseUrl}}/users/search-address/{{walletAddress}}
 
-### (Extra) Wallet sync (Auth not specified in guide)
-POST {{baseUrl}}/wallet/{{signerAddress}}/sync
-Content-Type: application/json
-
-{}
-
-### (Extra) Record new transaction (Auth not specified in guide)
-POST {{baseUrl}}/transactions/record
-Content-Type: application/json
-
-{
-  "from": "{{signerAddress}}",
-  "to": "{{employeeAddress}}",
-  "amount": "1000000",
-  "currency": "cNGN",
-  "type": "send",
-  "status": "pending"
-}
-
-### (Extra) Org lookup by signer address (Auth not specified in guide)
-GET {{baseUrl}}/organizations/signer/{{signerAddress}}
-
-### (Extra) Org lookup by creator address (Auth not specified in guide)
-GET {{baseUrl}}/organizations/creator/{{signerAddress}}
-
-### (Extra) Org lookup by ID
-GET {{baseUrl}}/organizations/{{organizationId}}
-
-### (Extra) Users batch lookup
+### Confirm a pasted list, 1 to 20 at a time
 POST {{baseUrl}}/users/batch-lookup
 Content-Type: application/json
 
 {
-  "usernames": ["{{employeeUsername}}"]
+  "usernames": ["{{employeeUsername}}", "john_roe"]
 }
+
+### Rate limit check: run this 21 times inside a minute, the 21st is 429.
+GET {{baseUrl}}/users/search/{{employeeUsername}}
+
+
+###############################################################################
+### NEGATIVE CASES
+###############################################################################
+
+### 401 without a session. Run POST /auth/logout first.
+GET {{baseUrl}}/users/search/{{employeeUsername}}
+
+### 400, register with no signature
+POST {{baseUrl}}/auth/register
+Content-Type: application/json
+
+{
+  "walletAddress": "{{walletAddress}}",
+  "surname": "Doe",
+  "firstname": "Jane",
+  "email": "jane@example.com"
+}
+
+### 403, cross-origin write. The CSRF guard only inspects Origin or Referer
+### when one is present, which is why REST Client's ordinary requests pass.
+POST {{baseUrl}}/transactions/watch
+Content-Type: application/json
+Origin: https://evil.example
+
+{
+  "txHash": "0x0000000000000000000000000000000000000000000000000000000000000000"
+}
+
+### 400, replayed signature. The nonce is consumed, so signing in twice with
+### the same signature fails.
+POST {{baseUrl}}/auth/login
+Content-Type: application/json
+
+{
+  "walletAddress": "{{walletAddress}}",
+  "signature": "{{signature}}"
+}
+
+### 404
+GET {{baseUrl}}/organizations/00000000-0000-0000-0000-000000000000
