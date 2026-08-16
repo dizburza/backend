@@ -1,15 +1,18 @@
 import { Router } from "express";
 import { WalletController } from "../controllers/wallet.controller.js";
-import { authenticate, optionalAuth } from "../middlewares/auth.middleware.js";
+import { authenticate } from "../middlewares/auth.middleware.js";
+import { requireAddressAccess } from "../middlewares/membership.middleware.js";
 import { validate } from "../middlewares/validation.middleware.js";
 import { param } from "express-validator";
 import { ValidationUtil } from "../utils/validation.util.js";
 
 const router = Router();
 
-// Get balance (public)
+// Get balance
 router.get(
   "/:address/balance",
+  authenticate,
+  requireAddressAccess,
   validate([
     param("address")
       .custom(ValidationUtil.isValidAddress)
@@ -21,25 +24,14 @@ router.get(
 // Get wallet summary
 router.get(
   "/:address/summary",
-  optionalAuth,
+  authenticate,
+  requireAddressAccess,
   validate([
     param("address")
       .custom(ValidationUtil.isValidAddress)
       .withMessage("Invalid wallet address"),
   ]),
   WalletController.getSummary
-);
-
-// Sync history
-router.post(
-  "/:address/sync",
-  authenticate,
-  validate([
-    param("address")
-      .custom(ValidationUtil.isValidAddress)
-      .withMessage("Invalid wallet address"),
-  ]),
-  WalletController.syncHistory
 );
 
 export default router;

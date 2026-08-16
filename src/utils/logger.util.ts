@@ -4,7 +4,9 @@ import { ENV } from "../config/environment.js";
 const isVercel = process.env.VERCEL === "1";
 
 const logger = winston.createLogger({
-  level: ENV.NODE_ENV === "production" ? "info" : "debug",
+  // Tests assert on status codes, not on logs, and a stack trace per expected
+  // 403 buries the result.
+  level: ENV.NODE_ENV === "test" ? "warn" : ENV.NODE_ENV === "production" ? "info" : "debug",
   format: winston.format.combine(
     winston.format.timestamp({ format: "YYYY-MM-DD HH:mm:ss" }),
     winston.format.errors({ stack: true }),

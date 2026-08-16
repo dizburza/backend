@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { PayrollController } from "../controllers/payroll.controller.js";
-import { authenticate, requireRole } from "../middlewares/auth.middleware.js";
+import { authenticate } from "../middlewares/auth.middleware.js";
+import {
+  requireBatchSigner,
+  requireOrganizationSigner,
+} from "../middlewares/membership.middleware.js";
 import {
   validate,
   ValidationRules,
@@ -13,7 +17,7 @@ const router = Router();
 router.post(
   "/batches",
   authenticate,
-  requireRole("signer", "admin"),
+  requireOrganizationSigner,
   validate(ValidationRules.createBatch),
   PayrollController.recordBatchCreation
 );
@@ -22,7 +26,7 @@ router.post(
 router.post(
   "/batches/:batchName/approve",
   authenticate,
-  requireRole("signer", "admin"),
+  requireBatchSigner,
   validate([
     param("batchName").trim().notEmpty().withMessage("Batch name is required"),
   ]),
@@ -33,7 +37,7 @@ router.post(
 router.post(
   "/batches/:batchName/revoke",
   authenticate,
-  requireRole("signer", "admin"),
+  requireBatchSigner,
   validate([
     param("batchName").trim().notEmpty().withMessage("Batch name is required"),
   ]),
@@ -44,7 +48,7 @@ router.post(
 router.post(
   "/batches/:batchName/execute",
   authenticate,
-  requireRole("signer", "admin"),
+  requireBatchSigner,
   validate([
     param("batchName").trim().notEmpty().withMessage("Batch name is required"),
   ]),
@@ -55,7 +59,7 @@ router.post(
 router.post(
   "/batches/:batchName/cancel",
   authenticate,
-  requireRole("signer", "admin"),
+  requireBatchSigner,
   validate([
     param("batchName").trim().notEmpty().withMessage("Batch name is required"),
   ]),
@@ -66,7 +70,8 @@ router.post(
 router.get(
   "/organizations/:id/batches",
   authenticate,
-  validate([param("id").isMongoId().withMessage("Invalid organization ID")]),
+  requireOrganizationSigner,
+  validate([param("id").isUUID().withMessage("Invalid organization ID")]),
   PayrollController.getBatches
 );
 
@@ -74,6 +79,7 @@ router.get(
 router.get(
   "/batches/:batchName",
   authenticate,
+  requireBatchSigner,
   validate([
     param("batchName").trim().notEmpty().withMessage("Batch name is required"),
   ]),

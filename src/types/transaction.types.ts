@@ -19,7 +19,12 @@ export type TransactionStatus = "pending" | "confirmed" | "failed";
 
 export interface TransactionData {
   txHash: string;
-  logIndex?: number;
+  /**
+   * Required. Defaulting a missing index to 0 silently merged distinct
+   * transfers that shared a transaction, which destroyed every recipient in a
+   * batch payroll except the first.
+   */
+  logIndex: number;
   type: TransactionType;
   fromAddress: string;
   toAddress: string;
@@ -47,6 +52,17 @@ export interface TransactionData {
   };
 }
 
+export type TransactionRange =
+  | "1h"
+  | "24h"
+  | "7d"
+  | "30d"
+  | "90d"
+  | "1y"
+  | "all";
+
+export type ChartBucket = "hour" | "day" | "week" | "month";
+
 export interface TransactionFilter {
   page?: number;
   limit?: number;
@@ -55,4 +71,5 @@ export interface TransactionFilter {
   startDate?: Date;
   endDate?: Date;
   status?: TransactionStatus;
+  range?: TransactionRange;
 }

@@ -35,6 +35,7 @@ export interface CreateOrganizationInput {
   businessEmail: string;
   businessInfo?: {
     registrationNumber?: string;
+    taxIdentificationNumber?: string;
     registrationType?: RegistrationType;
     certificate?: {
       fileUrl: string;
@@ -70,6 +71,7 @@ export interface OrganizationData {
   businessEmail: string;
   businessInfo?: {
     registrationNumber?: string;
+    taxIdentificationNumber?: string;
     registrationType?: RegistrationType;
     certificate?: {
       fileUrl: string;
@@ -108,6 +110,8 @@ export interface CreateBatchInput {
     amount: string;
     employeeName: string;
   }[];
+  /** The proposal this batch settles, if it settles one. */
+  proposalId?: string | null;
 }
 
 export interface BatchPayrollData {

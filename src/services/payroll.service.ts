@@ -1,9 +1,39 @@
-import { Organization, IOrganization } from "../models/Organization.model.js";
-import { BatchPayroll, IBatchPayroll } from "../models/BatchPayroll.model.js";
-import { User } from "../models/User.model.js";
-import { EmployeeAuditLog } from "../models/EmployeeAuditLog.model.js";
+import { ethers } from "ethers";
+import { and, asc, desc, eq, inArray, lt, sql } from "drizzle-orm";
+import type { PgColumn } from "drizzle-orm/pg-core";
+import { db, type DbTransaction } from "../db/client.js";
+import {
+  batchPayrollApprovals,
+  batchPayrollRecipients,
+  batchPayrolls,
+  employeeAuditLogs,
+  organizationMembers,
+  organizations,
+  proposals,
+  users,
+} from "../db/schema.js";
+import type {
+  BatchPayroll,
+  BatchPayrollApproval,
+  BatchPayrollRecipient,
+  Organization,
+  OrganizationMember,
+  User,
+} from "../db/types.js";
+
+/** A batch with the rows that used to be embedded arrays on the document. */
+export type BatchDetail = BatchPayroll & {
+  recipients: BatchPayrollRecipient[];
+  approvals: BatchPayrollApproval[];
+  approvalCount: number;
+};
+import { AppError } from "../middlewares/errorHandler.middleware.js";
+import { MembershipService } from "./membership.service.js";
+import { TokenService } from "./token.service.js";
+import { OrganizationService } from "./organization.service.js";
 import { CryptoUtil } from "../utils/crypto.util.js";
-import mongoose from "mongoose";
+import { TaxService } from "./tax.service.js";
+import logger from "../utils/logger.util.js";
 import {
   CreateOrganizationInput,
   CreateBatchInput,
@@ -35,7 +65,6 @@ interface BulkResults {
 
 type ProcessEmployeeRowContext = {
   organizationId: string;
-  organizationSlug: string;
   existingWallets: Set<string>;
   existingUsernames: Set<string>;
   generatedUsernames: Set<string>;
@@ -43,10 +72,6 @@ type ProcessEmployeeRowContext = {
 };
 
 export class PayrollService {
-  private static toObjectId(id: unknown): mongoose.Types.ObjectId {
-    return new mongoose.Types.ObjectId(String(id));
-  }
-
   private static getDisplayUsername(username?: string): string | undefined {
     if (!username) return username;
     return username.startsWith("unregistered") ? "unregistered" : username;
@@ -98,21 +123,22 @@ export class PayrollService {
 
   private static async resolveEmployeeUser(
     data: AddEmployeeData
-  ): Promise<{ user: any; isNewUser: boolean; source: "username" | "wallet" }> {
+  ): Promise<{ user: User; source: "username" | "wallet" }> {
     const rawUsername = (data.username || "").trim();
     const rawWallet = (data.walletAddress || "").trim();
 
     if (rawUsername) {
-      const existingByUsername = await User.findOne({
-        username: rawUsername.toLowerCase(),
-        isActive: true,
-      });
+      const [existingByUsername] = await db
+        .select()
+        .from(users)
+        .where(and(eq(users.username, rawUsername.toLowerCase()), eq(users.isActive, true)))
+        .limit(1);
 
       if (!existingByUsername) {
         throw new Error(`User with username "${rawUsername}" not found`);
       }
 
-      return { user: existingByUsername, isNewUser: false, source: "username" };
+      return { user: existingByUsername, source: "username" };
     }
 
     if (!rawWallet) {
@@ -122,27 +148,29 @@ export class PayrollService {
       throw new Error("Firstname and surname are required when username is not provided");
     }
 
-    const existingByWallet = await User.findOne({
-      walletAddress: rawWallet.toLowerCase(),
-      isActive: true,
-    });
+    const [existingByWallet] = await db
+      .select()
+      .from(users)
+      .where(and(eq(users.walletAddress, rawWallet.toLowerCase()), eq(users.isActive, true)))
+      .limit(1);
 
     if (existingByWallet) {
-      return { user: existingByWallet, isNewUser: false, source: "wallet" };
+      return { user: existingByWallet, source: "wallet" };
     }
 
     const generatedUsername = await this.generateUnregisteredUsername(rawWallet);
-    const created = await User.create({
-      username: generatedUsername,
-      surname: data.surname,
-      firstname: data.firstname,
-      walletAddress: rawWallet.toLowerCase(),
-      fullName: `${data.firstname} ${data.surname}`,
-      role: "employee",
-      isActive: true,
-    });
+    const [created] = await db
+      .insert(users)
+      .values({
+        username: generatedUsername,
+        surname: data.surname,
+        firstname: data.firstname,
+        walletAddress: rawWallet.toLowerCase(),
+        fullName: `${data.firstname} ${data.surname}`,
+      })
+      .returning();
 
-    return { user: created, isNewUser: true, source: "wallet" };
+    return { user: created, source: "wallet" };
   }
 
   /**
@@ -196,7 +224,12 @@ export class PayrollService {
       details: [],
     };
 
-    const organization = await Organization.findById(organizationId);
+    const [organization] = await db
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(eq(organizations.id, organizationId))
+      .limit(1);
+
     if (!organization) {
       throw new Error("Organization not found");
     }
@@ -211,7 +244,6 @@ export class PayrollService {
       await this.processEmployeeRow(
         {
           organizationId,
-          organizationSlug: organization.slug,
           existingWallets,
           existingUsernames,
           generatedUsernames,
@@ -314,19 +346,24 @@ export class PayrollService {
     });
   }
 
-  private static normalizeSalaryToChainUnits(salary: string): string {
+  /**
+   * Salaries arrive as human amounts and are scaled by the token's decimals.
+   *
+   * This used to guess: anything at or above 1e10 was assumed to be already
+   * scaled, anything below was multiplied by 1e6. That existed because the edit
+   * screen scaled client side and the add screen did not, and it only produced
+   * the right answer because the token happens to have 6 decimals. Both callers
+   * now send the human figure and the conversion happens here.
+   */
+  private static async normalizeSalaryToChainUnits(salary: string): Promise<string> {
     const trimmed = salary.trim();
     if (!trimmed) return "0";
 
-    const asBigInt = BigInt(trimmed);
-
-    // Heuristic:
-    // - If salary is already scaled for chain (>= 1e10), keep as-is.
-    // - Otherwise multiply by 1e6 (human amount -> chain units).
-    const CHAIN_THRESHOLD = 10_000_000_000n;
-    if (asBigInt >= CHAIN_THRESHOLD) return asBigInt.toString();
-
-    return (asBigInt * 1_000_000n).toString();
+    try {
+      return (await TokenService.parse(trimmed)).toString();
+    } catch {
+      throw new AppError(`Invalid salary amount: ${salary}`, 400);
+    }
   }
 
   private static async generateUnregisteredUsername(_walletAddress: string): Promise<string> {
@@ -335,8 +372,16 @@ export class PayrollService {
     let candidate = base;
     let counter = 1;
 
-    // Ensure uniqueness across the entire User collection
-    while (await User.exists({ username: candidate })) {
+    // Must be unique across all users, not just this organization.
+    while (
+      (
+        await db
+          .select({ id: users.id })
+          .from(users)
+          .where(eq(users.username, candidate))
+          .limit(1)
+      ).length > 0
+    ) {
       counter++;
       candidate = `${base}${counter}`;
     }
@@ -359,85 +404,52 @@ export class PayrollService {
     });
   }
 
-  private static async createNewUser(
-    organizationId: string,
-    organizationSlug: string,
-    row: CsvRow,
-    generatedUsername: string
-  ) {
-    return await User.create({
-      username: generatedUsername,
-      surname: row.surname,
-      firstname: row.firstname,
-      walletAddress: row.walletAddress,
-      fullName: `${row.firstname} ${row.surname}`,
-      role: "employee",
-      organizationId: this.toObjectId(organizationId),
-      organizationSlug,
-      jobDetails: {
-        jobRole: row.jobRole,
-        salary: this.normalizeSalaryToChainUnits(row.salary),
-        department: row.department,
-        employeeId: row.employeeId,
-        joinedAt: new Date(),
-      },
-    });
+  private static async createNewUser(row: CsvRow, generatedUsername: string) {
+    const [created] = await db
+      .insert(users)
+      .values({
+        username: generatedUsername,
+        surname: row.surname,
+        firstname: row.firstname,
+        walletAddress: row.walletAddress,
+        fullName: `${row.firstname} ${row.surname}`,
+      })
+      .returning();
+
+    return created;
   }
 
-  private static async updateExistingUser(
-    user: any,
-    organizationId: string,
-    organizationSlug: string,
-    row: CsvRow
-  ) {
-    user.organizationId = this.toObjectId(organizationId);
-    user.organizationSlug = organizationSlug;
-    user.surname = row.surname || user.surname;
-    user.firstname = row.firstname || user.firstname;
-    user.fullName = `${row.firstname || user.firstname} ${row.surname || user.surname}`;
-    user.jobDetails = {
-      jobRole: row.jobRole,
-      salary: this.normalizeSalaryToChainUnits(row.salary),
-      department: row.department,
-      employeeId: row.employeeId,
-      joinedAt: new Date(),
-    };
-    await user.save();
-  }
+  /** Refresh the person's own details from a CSV row, not their employment. */
+  private static async updateExistingUser(user: User, row: CsvRow) {
+    const surname = row.surname || user.surname;
+    const firstname = row.firstname || user.firstname;
 
-  private static async addEmployeeToOrganization(
-    organizationId: string,
-    userId: mongoose.Types.ObjectId,
-    walletAddress: string,
-    existingWallets: Set<string>
-  ): Promise<void> {
-    await Organization.findByIdAndUpdate(this.toObjectId(organizationId), {
-      $addToSet: { employees: userId },
-    });
-    existingWallets.add(walletAddress);
+    const [updated] = await db
+      .update(users)
+      .set({
+        surname,
+        firstname,
+        fullName: `${firstname} ${surname}`,
+        updatedAt: new Date(),
+      })
+      .where(eq(users.id, user.id))
+      .returning();
+
+    return updated;
   }
 
   private static async getExistingEmployees(organizationId: string): Promise<{
     existingWallets: Set<string>;
     existingUsernames: Set<string>;
   }> {
-    const existingEmployees = await User.find({
-      organizationId: this.toObjectId(organizationId),
-      isActive: true,
-    }).select("walletAddress username");
+    const existing = await MembershipService.listWithUsers(organizationId, "employee");
 
-    const existingWallets: Set<string> = new Set<string>(
-      existingEmployees
-        .map((e) => e.walletAddress?.toLowerCase())
-        .filter((v): v is string => Boolean(v))
-    );
-    const existingUsernames: Set<string> = new Set<string>(
-      existingEmployees
-        .map((e) => e.username?.toLowerCase())
-        .filter((v): v is string => Boolean(v))
-    );
-
-    return { existingWallets, existingUsernames };
+    return {
+      existingWallets: new Set(existing.map((e) => e.member.address)),
+      existingUsernames: new Set(
+        existing.map((e) => e.user?.username).filter((u): u is string => Boolean(u))
+      ),
+    };
   }
 
   private static async processEmployeeRow(
@@ -447,7 +459,6 @@ export class PayrollService {
   ): Promise<void> {
     const {
       organizationId,
-      organizationSlug,
       existingWallets,
       existingUsernames,
       generatedUsernames,
@@ -456,26 +467,17 @@ export class PayrollService {
     const { walletAddress, surname, firstname } = row;
 
     try {
-      let user = await User.findOne({ walletAddress, isActive: true });
+      const [found] = await db
+        .select()
+        .from(users)
+        .where(and(eq(users.walletAddress, walletAddress), eq(users.isActive, true)))
+        .limit(1);
+
+      let user = found;
       let isNewUser = false;
 
       if (user) {
-        if (user.organizationId && user.organizationId.toString() !== organizationId) {
-          throw new Error("User is already an employee of another organization");
-        }
-
-        if (user.organizationId?.toString() === organizationId) {
-          results.details.push({
-            walletAddress,
-            username: user.username || "",
-            status: "skipped",
-            isVerified: true,
-            message: "User already in this organization",
-          });
-          return;
-        }
-
-        await this.updateExistingUser(user, organizationId, organizationSlug, row);
+        user = await this.updateExistingUser(user, row);
       } else {
         isNewUser = true;
 
@@ -487,18 +489,31 @@ export class PayrollService {
           firstname,
           surname,
           existingUsernames,
-          generatedUsernames
-          ,
+          generatedUsernames,
           `unregistered_${walletSuffix}`
         );
         generatedUsernames.add(generatedUsername);
         existingUsernames.add(generatedUsername);
 
-        user = await this.createNewUser(organizationId, organizationSlug, row, generatedUsername);
+        user = await this.createNewUser(row, generatedUsername);
       }
 
-      await this.addEmployeeToOrganization(organizationId, user._id, walletAddress, existingWallets);
-      this.recordSuccess(results, walletAddress, isNewUser ? "" : (user.username || ""), isNewUser);
+      // Rejected here if the person already works somewhere else: the unique
+      // index on employment raises, and upsert turns it into a 409.
+      await MembershipService.upsert({
+        organizationId,
+        userId: user.id,
+        address: walletAddress,
+        name: user.fullName,
+        role: "employee",
+        jobRole: row.jobRole,
+        salary: await this.normalizeSalaryToChainUnits(row.salary),
+        department: row.department,
+        employeeId: row.employeeId,
+      });
+
+      existingWallets.add(walletAddress);
+      this.recordSuccess(results, walletAddress, isNewUser ? "" : user.username, isNewUser);
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : "Unknown error";
       this.recordError(results, rowIndex, walletAddress, errorMsg);
@@ -512,15 +527,30 @@ export class PayrollService {
    */
   static async createOrganization(
     data: CreateOrganizationInput
-  ): Promise<IOrganization> {
-    const existing = await Organization.findOne({
-      contractAddress: data.contractAddress.toLowerCase(),
-      isActive: true,
-    });
+  ): Promise<Organization> {
+    const [existing] = await db
+      .select()
+      .from(organizations)
+      .where(
+        and(
+          eq(organizations.contractAddress, data.contractAddress.toLowerCase()),
+          eq(organizations.isActive, true)
+        )
+      )
+      .limit(1);
 
     if (existing) {
       return existing;
     }
+
+    const registrationNumber = this.normalizeIdentifier(
+      data.businessInfo?.registrationNumber
+    );
+    const taxIdentificationNumber = this.normalizeIdentifier(
+      data.businessInfo?.taxIdentificationNumber
+    );
+
+    await this.assertIdentifiersUnclaimed(registrationNumber, taxIdentificationNumber);
 
     const slug = await CryptoUtil.generateUniqueSlug(data.name);
 
@@ -533,67 +563,185 @@ export class PayrollService {
         timestamp: Date.now(),
       });
 
-    const organization = await Organization.create({
-      name: data.name,
-      slug,
-      contractAddress: data.contractAddress.toLowerCase(),
-      organizationHash,
-      creatorAddress: data.creatorAddress.toLowerCase(),
-      businessEmail: data.businessEmail,
-      businessInfo: data.businessInfo,
-      signers: data.signers.map((s) => ({
-        address: s.address.toLowerCase(),
-        name: s.name,
-        role: s.role,
-        addedAt: new Date(),
-        isActive: true,
-      })),
-      quorum: data.quorum,
-      employees: [],
-      metadata: data.metadata || {},
-      settings: data.settings || {
-        payrollCurrency: "cNGN",
-      },
+    // One transaction so a failure part-way cannot leave an organization with
+    // no signers, or signers pointing at an organization that does not exist.
+    return db.transaction(async (tx) => {
+      const [organization] = await tx
+        .insert(organizations)
+        .values({
+          name: data.name,
+          slug,
+          contractAddress: data.contractAddress.toLowerCase(),
+          organizationHash,
+          creatorAddress: data.creatorAddress.toLowerCase(),
+          businessEmail: data.businessEmail,
+          registrationNumber,
+          taxIdentificationNumber,
+          registrationType: data.businessInfo?.registrationType,
+          certificateFileUrl: data.businessInfo?.certificate?.fileUrl,
+          certificateFileName: data.businessInfo?.certificate?.fileName,
+          certificateUploadedAt: data.businessInfo?.certificate?.uploadedAt,
+          quorum: data.quorum,
+          industry: data.metadata?.industry,
+          size: data.metadata?.size,
+          description: data.metadata?.description,
+          payrollCurrency: data.settings?.payrollCurrency || "cNGN",
+          defaultPaymentDay: data.settings?.defaultPaymentDay,
+          timeZone: data.settings?.timeZone || "Africa/Lagos",
+        })
+        .returning();
+
+      const creatorAddress = data.creatorAddress.toLowerCase();
+
+      // The creator is the owner, everyone else named here is a plain signer.
+      // Signing elsewhere is not a reason to reject anyone: one address can be
+      // a signer of any number of organizations, on chain and here.
+      const byAddress = new Map<string, { name: string; role: "owner" | "signer" }>();
+      for (const signer of data.signers) {
+        const signerAddress = signer.address.toLowerCase();
+        byAddress.set(signerAddress, {
+          name: signer.name,
+          role: signerAddress === creatorAddress ? "owner" : "signer",
+        });
+      }
+
+      const accounts = await tx
+        .select({
+          id: users.id,
+          walletAddress: users.walletAddress,
+          fullName: users.fullName,
+        })
+        .from(users)
+        .where(inArray(users.walletAddress, [...byAddress.keys(), creatorAddress]));
+
+      const accountByAddress = new Map(accounts.map((a) => [a.walletAddress, a]));
+
+      if (!byAddress.has(creatorAddress)) {
+        byAddress.set(creatorAddress, {
+          name: accountByAddress.get(creatorAddress)?.fullName ?? "Creator",
+          role: "owner",
+        });
+      }
+
+      await MembershipService.insertMany(
+        [...byAddress].map(([memberAddress, member]) => ({
+          organizationId: organization.id,
+          userId: accountByAddress.get(memberAddress)?.id ?? null,
+          address: memberAddress,
+          name: member.name,
+          role: member.role,
+        })),
+        tx
+      );
+
+      return organization;
+    });
+  }
+
+  /**
+   * Strip punctuation and case so "RC 123456" and "rc-123456" collide.
+   * Without this the unique index would happily accept both.
+   */
+  private static normalizeIdentifier(value?: string): string | null {
+    const cleaned = (value ?? "").replaceAll(/[^a-zA-Z0-9]/g, "").toUpperCase();
+    return cleaned || null;
+  }
+
+  /**
+   * A company registration and a TIN each identify one real company, so they
+   * are claimed once and never reused, by anyone including the same creator.
+   * The unique indexes are the real guard; this exists to name which field
+   * clashed instead of surfacing a constraint error.
+   */
+  private static async assertIdentifiersUnclaimed(
+    registrationNumber: string | null,
+    taxIdentificationNumber: string | null
+  ): Promise<void> {
+    const availability = await this.checkIdentifiers({
+      registrationNumber: registrationNumber ?? undefined,
+      taxIdentificationNumber: taxIdentificationNumber ?? undefined,
     });
 
-    // Update all signers
-    for (const signer of data.signers) {
-      await User.findOneAndUpdate(
-        { walletAddress: signer.address.toLowerCase() },
-        {
-          role: "signer",
-          organizationId: organization._id,
-          organizationSlug: slug,
-        }
+    if (!availability.registrationNumberAvailable) {
+      throw new AppError(
+        "This registration number is already registered to another organization",
+        409
       );
     }
 
-    return organization;
+    if (!availability.taxIdentificationNumberAvailable) {
+      throw new AppError(
+        "This tax identification number is already registered to another organization",
+        409
+      );
+    }
+  }
+
+  /**
+   * Checked live during onboarding so a clash surfaces on the field rather
+   * than after the organization has already been created on chain.
+   */
+  static async checkIdentifiers(input: {
+    registrationNumber?: string;
+    taxIdentificationNumber?: string;
+  }): Promise<{
+    registrationNumberAvailable: boolean;
+    taxIdentificationNumberAvailable: boolean;
+  }> {
+    const registrationNumber = this.normalizeIdentifier(input.registrationNumber);
+    const taxIdentificationNumber = this.normalizeIdentifier(
+      input.taxIdentificationNumber
+    );
+
+    const isTaken = async (column: PgColumn, value: string) => {
+      const [row] = await db
+        .select({ id: organizations.id })
+        .from(organizations)
+        .where(eq(column, value))
+        .limit(1);
+      return Boolean(row);
+    };
+
+    return {
+      registrationNumberAvailable: registrationNumber
+        ? !(await isTaken(organizations.registrationNumber, registrationNumber))
+        : true,
+      taxIdentificationNumberAvailable: taxIdentificationNumber
+        ? !(await isTaken(organizations.taxIdentificationNumber, taxIdentificationNumber))
+        : true,
+    };
   }
 
   /**
    * Get organization by slug
    */
-  static async getOrganizationBySlug(
-    slug: string
-  ): Promise<IOrganization | null> {
-    return await Organization.findOne({ slug, isActive: true }).populate(
-      "employees",
-      "username fullName walletAddress avatar"
-    );
+  static async getOrganizationBySlug(slug: string) {
+    const organization = await OrganizationService.findBySlug(slug);
+    return organization?.isActive ? organization : null;
   }
 
   /**
-   * Get organization for signer
+   * Organizations an address signs for.
+   *
+   * A list rather than one row: signing is uncapped, so a founder can hold a
+   * seat in more than one organization.
    */
-  static async getOrganizationForSigner(
+  static async getOrganizationsForSigner(
     signerAddress: string
-  ): Promise<IOrganization | null> {
-    return await Organization.findOne({
-      "signers.address": signerAddress.toLowerCase(),
-      "signers.isActive": true,
-      isActive: true,
-    });
+  ): Promise<Organization[]> {
+    const memberships = await MembershipService.signingFor(signerAddress);
+    if (memberships.length === 0) return [];
+
+    return db
+      .select()
+      .from(organizations)
+      .where(
+        inArray(
+          organizations.id,
+          memberships.map((m) => m.organizationId)
+        )
+      )
+      .orderBy(desc(organizations.createdAt));
   }
 
   /**
@@ -604,57 +752,47 @@ export class PayrollService {
     data: AddEmployeeData,
     performedBy?: { userId?: string; username?: string; walletAddress?: string }
   ) {
-    const { user, isNewUser, source } = await this.resolveEmployeeUser(data);
+    const { user, source } = await this.resolveEmployeeUser(data);
 
-    // Check if user is already in another organization
-    if (
-      user.organizationId &&
-      user.organizationId.toString() !== organizationId
-    ) {
-      throw new Error(`User is already an employee of another organization`);
+    const existing = await MembershipService.employmentFor(user.walletAddress);
+    if (existing?.organizationId === organizationId) {
+      throw new AppError("User is already an employee of this organization", 409);
+    }
+    if (existing) {
+      throw new AppError("User is already an employee of another organization", 409);
     }
 
-    // Check if user is already in this organization
-    if (
-      user.organizationId?.toString() === organizationId
-    ) {
-      throw new Error(`User is already an employee of this organization`);
-    }
+    const [organization] = await db
+      .select({ id: organizations.id })
+      .from(organizations)
+      .where(eq(organizations.id, organizationId))
+      .limit(1);
 
-    const organization = await Organization.findById(organizationId);
     if (!organization) {
-      throw new Error("Organization not found");
+      throw new AppError("Organization not found", 404);
     }
 
-    // Update user with organization and job details
-    user.organizationId = this.toObjectId(organizationId);
-    user.organizationSlug = organization.slug;
-    if (isNewUser) {
-      user.role = "employee";
-    }
-    user.jobDetails = {
+    const membership = await MembershipService.upsert({
+      organizationId,
+      userId: user.id,
+      address: user.walletAddress,
+      name: user.fullName,
+      role: "employee",
       jobRole: data.jobRole,
-      salary: this.normalizeSalaryToChainUnits(data.salary),
+      salary: await this.normalizeSalaryToChainUnits(data.salary),
       department: data.department,
       employeeId: data.employeeId,
-      joinedAt: new Date(),
-    };
-    await user.save();
-
-    // Add to organization's employees array
-    await Organization.findByIdAndUpdate(organizationId, {
-      $addToSet: { employees: user._id },
     });
 
-    await EmployeeAuditLog.create({
-      organizationId: this.toObjectId(organizationId),
-      employeeUserId: user._id,
+    await db.insert(employeeAuditLogs).values({
+      organizationId,
+      employeeUserId: user.id,
       employeeUsername: user.username,
       employeeWalletAddress: user.walletAddress,
       action: "ADD",
-      performedByUserId: performedBy?.userId ? this.toObjectId(performedBy.userId) : undefined,
+      performedByUserId: performedBy?.userId,
       performedByUsername: performedBy?.username,
-      performedByWalletAddress: performedBy?.walletAddress,
+      performedByWalletAddress: performedBy?.walletAddress?.toLowerCase(),
       changes: {
         jobRole: data.jobRole,
         salary: data.salary,
@@ -664,11 +802,14 @@ export class PayrollService {
       },
     });
 
-    return user;
+    return { ...user, membership };
   }
 
   /**
-   * Update employee details
+   * Update employment terms.
+   *
+   * These live on the membership, not the person, so changing a salary here
+   * cannot leak into another organization's view of the same user.
    */
   static async updateEmployee(
     organizationId: string,
@@ -681,511 +822,509 @@ export class PayrollService {
     },
     performedBy?: { userId?: string; username?: string; walletAddress?: string }
   ) {
-    const user = await User.findOne({
-      username: username.toLowerCase(),
-      organizationId: this.toObjectId(organizationId),
-      isActive: true,
+    const { user, membership } = await this.findEmployee(organizationId, username);
+
+    const updated = await MembershipService.updateEmployment(membership.id, {
+      ...(updates.jobRole === undefined ? {} : { jobRole: updates.jobRole }),
+      ...(updates.department === undefined ? {} : { department: updates.department }),
+      ...(updates.employeeId === undefined ? {} : { employeeId: updates.employeeId }),
+      ...(updates.salary
+        ? { salary: await this.normalizeSalaryToChainUnits(updates.salary) }
+        : {}),
     });
 
-    if (!user) {
-      throw new Error("Employee not found in this organization");
-    }
-
-    // Update job details
-    user.jobDetails = {
-      ...user.jobDetails,
-      ...updates,
-      ...(updates.salary ? { salary: this.normalizeSalaryToChainUnits(updates.salary) } : {}),
-    };
-    await user.save();
-
-    await EmployeeAuditLog.create({
-      organizationId: this.toObjectId(organizationId),
-      employeeUserId: user._id,
+    await db.insert(employeeAuditLogs).values({
+      organizationId,
+      employeeUserId: user.id,
       employeeUsername: user.username,
       employeeWalletAddress: user.walletAddress,
       action: "UPDATE",
-      performedByUserId: performedBy?.userId ? this.toObjectId(performedBy.userId) : undefined,
+      performedByUserId: performedBy?.userId,
       performedByUsername: performedBy?.username,
-      performedByWalletAddress: performedBy?.walletAddress,
+      performedByWalletAddress: performedBy?.walletAddress?.toLowerCase(),
       changes: updates,
     });
 
-    return user;
+    return { ...user, membership: updated };
+  }
+
+  private static async findEmployee(
+    organizationId: string,
+    username: string
+  ): Promise<{ user: User; membership: OrganizationMember }> {
+    const [row] = await db
+      .select({ user: users, membership: organizationMembers })
+      .from(organizationMembers)
+      .innerJoin(users, eq(users.id, organizationMembers.userId))
+      .where(
+        and(
+          eq(organizationMembers.organizationId, organizationId),
+          eq(organizationMembers.role, "employee"),
+          eq(organizationMembers.isActive, true),
+          eq(users.username, username.toLowerCase()),
+          eq(users.isActive, true)
+        )
+      )
+      .limit(1);
+
+    if (!row) throw new AppError("Employee not found in this organization", 404);
+    return row;
   }
 
   /**
-   * Remove employee from organization
+   * End someone's employment with an organization.
+   *
+   * Their signer seat, if they hold one, is untouched: the two are separate
+   * memberships and losing a job does not remove a governance seat.
    */
   static async removeEmployee(
     organizationId: string,
     username: string,
     performedBy?: { userId?: string; username?: string; walletAddress?: string }
   ) {
-    const user = await User.findOne({
-      username: username.toLowerCase(),
-      organizationId: this.toObjectId(organizationId),
-      isActive: true,
-    });
+    const { user } = await this.findEmployee(organizationId, username);
 
-    if (!user) {
-      throw new Error("Employee not found in this organization");
-    }
+    const removed = await MembershipService.deactivate(
+      organizationId,
+      user.walletAddress,
+      "employee"
+    );
 
-    // Check if user is a signer
-    const organization = await Organization.findById(organizationId);
-    if (organization) {
-      const isSigner = organization.signers.some(
-        (s) => s.address.toLowerCase() === user.walletAddress.toLowerCase()
-      );
-      if (isSigner) {
-        throw new Error(
-          "Cannot remove a signer as employee. Remove from signers first."
-        );
-      }
-    }
-
-    // Remove organization details from user
-    const prevUsername = user.username;
-    const prevWallet = user.walletAddress;
-    user.organizationId = undefined;
-    user.organizationSlug = undefined;
-    user.jobDetails = undefined;
-    user.role = "employee";
-    await user.save();
-
-    // Remove from organization's employees array
-    await Organization.findByIdAndUpdate(organizationId, {
-      $pull: { employees: user._id },
-    });
-
-    await EmployeeAuditLog.create({
-      organizationId: this.toObjectId(organizationId),
-      employeeUserId: user._id,
-      employeeUsername: prevUsername,
-      employeeWalletAddress: prevWallet,
+    // Logged with the pre-removal identity, since the membership no longer
+    // resolves once the update above lands.
+    await db.insert(employeeAuditLogs).values({
+      organizationId,
+      employeeUserId: user.id,
+      employeeUsername: user.username,
+      employeeWalletAddress: user.walletAddress,
       action: "REMOVE",
-      performedByUserId: performedBy?.userId ? this.toObjectId(performedBy.userId) : undefined,
+      performedByUserId: performedBy?.userId,
       performedByUsername: performedBy?.username,
-      performedByWalletAddress: performedBy?.walletAddress,
+      performedByWalletAddress: performedBy?.walletAddress?.toLowerCase(),
     });
 
-    return user;
+    return { ...user, membership: removed };
   }
 
   /**
-   * Get organization employees with full details
-   * Returns only regular employees (not signers)
+   * Employees of an organization, with their employment terms and last audit.
+   *
+   * `isSigner` is a real lookup rather than a constant: holding a signer seat
+   * and being on payroll are separate memberships, and someone can have both.
    */
   static async getOrganizationEmployees(organizationId: string) {
-    const organization = await Organization.findById(organizationId).populate({
-      path: "employees",
-      select:
-        "username fullName surname firstname walletAddress email avatar jobDetails role createdAt",
-    });
-
+    const organization = await OrganizationService.findById(organizationId);
     if (!organization) {
-      throw new Error("Organization not found");
+      throw new AppError("Organization not found", 404);
     }
 
-    // Get active signers for reference (not included in employee list)
-    const activeSigners = organization.signers.filter(s => s.isActive);
-
-    // Return only regular employees (signers are managed separately)
-    const baseEmployees = (organization.employees as any[]).map((e: any) => ({
-      ...e.toObject?.() || e,
-      isSigner: false,
-    }));
-
-    const employeeIds = baseEmployees
-      .map((e: any) => e?._id)
-      .filter(Boolean)
-      .map((id: any) => this.toObjectId(id));
-
-    const lastAudits = employeeIds.length
-      ? await EmployeeAuditLog.aggregate([
-          {
-            $match: {
-              organizationId: this.toObjectId(organizationId),
-              employeeUserId: { $in: employeeIds },
-            },
-          },
-          { $sort: { createdAt: -1 } },
-          {
-            $group: {
-              _id: "$employeeUserId",
-              action: { $first: "$action" },
-              createdAt: { $first: "$createdAt" },
-              performedByUserId: { $first: "$performedByUserId" },
-              performedByUsername: { $first: "$performedByUsername" },
-              performedByWalletAddress: { $first: "$performedByWalletAddress" },
-            },
-          },
-          {
-            $lookup: {
-              from: "users",
-              localField: "performedByUserId",
-              foreignField: "_id",
-              as: "performedByUser",
-            },
-          },
-          {
-            $addFields: {
-              performedByUser: { $arrayElemAt: ["$performedByUser", 0] },
-            },
-          },
-          {
-            $addFields: {
-              performedByWalletAddress: {
-                $ifNull: ["$performedByWalletAddress", "$performedByUser.walletAddress"],
-              },
-            },
-          },
-          {
-            $lookup: {
-              from: "users",
-              let: { performedByWallet: "$performedByWalletAddress" },
-              pipeline: [
-                {
-                  $match: {
-                    $expr: {
-                      $and: [
-                        { $ne: ["$$performedByWallet", null] },
-                        { $eq: ["$walletAddress", "$$performedByWallet"] },
-                      ],
-                    },
-                  },
-                },
-                { $project: { username: 1, walletAddress: 1 } },
-              ],
-              as: "performedByWalletUser",
-            },
-          },
-          {
-            $addFields: {
-              performedByWalletUser: { $arrayElemAt: ["$performedByWalletUser", 0] },
-            },
-          },
-          {
-            $addFields: {
-              performedByUsername: {
-                $ifNull: [
-                  {
-                    $cond: [
-                      {
-                        $or: [
-                          { $eq: ["$performedByUsername", null] },
-                          { $eq: ["$performedByUsername", ""] },
-                        ],
-                      },
-                      null,
-                      "$performedByUsername",
-                    ],
-                  },
-                  {
-                    $ifNull: ["$performedByUser.username", "$performedByWalletUser.username"],
-                  },
-                ],
-              },
-            },
-          },
-          {
-            $project: {
-              performedByUser: 0,
-              performedByWalletUser: 0,
-            },
-          },
-        ])
-      : [];
-
-    const auditByEmployeeId = new Map(
-      lastAudits.map((a: any) => [String(a._id), a])
+    const employees = await MembershipService.listWithUsers(organizationId, "employee");
+    const { decimals, symbol } = await TokenService.getDefault();
+    const signerAddresses = new Set(
+      (await MembershipService.signersOf(organizationId)).map((s) => s.address)
     );
 
-    const employees = baseEmployees.map((e: any) => {
-      const audit = auditByEmployeeId.get(String(e._id));
-      return {
-        ...e,
-        displayUsername: this.getDisplayUsername(e.username),
-        lastAudit: audit
-          ? {
-              action: audit.action,
-              createdAt: audit.createdAt,
-              performedByUsername: audit.performedByUsername,
-              performedByWalletAddress: audit.performedByWalletAddress,
-            }
-          : null,
-      };
-    });
+    const employeeUserIds = employees
+      .map((e) => e.user?.id)
+      .filter((id): id is string => Boolean(id));
+
+    // Latest audit entry per employee. DISTINCT ON replaces what was a
+    // 100-line aggregation pipeline of $group, $lookup and $ifNull stages.
+    // COALESCE fills the actor's username and wallet from the users table when
+    // the log did not capture them at the time.
+    const audits = employeeUserIds.length
+      ? await db.execute<{
+          employee_user_id: string;
+          action: string;
+          created_at: Date;
+          performed_by_username: string | null;
+          performed_by_wallet_address: string | null;
+        }>(sql`
+          select distinct on (l.employee_user_id)
+            l.employee_user_id,
+            l.action,
+            l.created_at,
+            coalesce(nullif(l.performed_by_username, ''), actor.username, by_wallet.username)
+              as performed_by_username,
+            coalesce(l.performed_by_wallet_address, actor.wallet_address)
+              as performed_by_wallet_address
+          from ${employeeAuditLogs} l
+          left join ${users} actor on actor.id = l.performed_by_user_id
+          left join ${users} by_wallet
+            on by_wallet.wallet_address = l.performed_by_wallet_address
+          where l.organization_id = ${organizationId}
+            and l.employee_user_id in ${employeeUserIds}
+          order by l.employee_user_id, l.created_at desc
+        `)
+      : [];
+
+    const auditByEmployee = new Map(audits.map((a) => [a.employee_user_id, a]));
 
     return {
-      organization: {
-        name: organization.name,
-        slug: organization.slug,
-      },
-      employees,
+      organization: { name: organization.name, slug: organization.slug },
+      employees: employees.map(({ member, user }) => {
+        const audit = user ? auditByEmployee.get(user.id) : undefined;
+
+        return {
+          _id: user?.id ?? member.id,
+          username: user?.username ?? "",
+          displayUsername: this.getDisplayUsername(user?.username),
+          surname: user?.surname ?? "",
+          firstname: user?.firstname ?? "",
+          fullName: user?.fullName ?? member.name,
+          walletAddress: member.address,
+          email: user?.email ?? undefined,
+          role: "employee",
+          isSigner: signerAddresses.has(member.address),
+          jobDetails: {
+            jobRole: member.jobRole ?? undefined,
+            salary: member.salary ?? "0",
+            // Formatted here so the browser never has to know the token's
+            // precision to render a payslip figure.
+            salaryFormatted: ethers.formatUnits(member.salary ?? "0", decimals),
+            currency: symbol,
+            department: member.department ?? undefined,
+            employeeId: member.employeeId ?? undefined,
+            joinedAt: member.joinedAt,
+          },
+          lastAudit: audit
+            ? {
+                action: audit.action,
+                createdAt: audit.created_at,
+                performedByUsername: audit.performed_by_username,
+                performedByWalletAddress: audit.performed_by_wallet_address,
+              }
+            : null,
+        };
+      }),
       totalEmployees: employees.length,
-      signersCount: activeSigners.length,
+      signersCount: signerAddresses.size,
     };
   }
 
   /**
    * Get all organizations
    */
-  static async getAllOrganizations() {
-    return await Organization.find({ isActive: true })
-      .select("name slug creatorAddress signers quorum createdAt")
-      .sort({ createdAt: -1 });
-  }
 
   /**
    * Record batch payroll creation in database
    * Frontend calls Dizburza.createBatchPayroll() first
    * Then calls this endpoint to store the record
    */
-  static async recordBatchCreation(
-    data: CreateBatchInput
-  ): Promise<IBatchPayroll> {
-    const existing = await BatchPayroll.findOne({ batchName: data.batchName });
-    if (existing) {
-      return existing;
-    }
+  static async recordBatchCreation(data: CreateBatchInput): Promise<BatchDetail> {
+    const existing = await this.getBatchByName(data.batchName);
+    if (existing) return existing;
 
-    // Get organization to fetch quorum
-    const organization = await Organization.findById(data.organizationId);
+    const [organization] = await db
+      .select({ quorum: organizations.quorum })
+      .from(organizations)
+      .where(eq(organizations.id, data.organizationId))
+      .limit(1);
+
     if (!organization) {
       throw new Error("Organization not found");
     }
 
-    // Calculate total amount
     const totalAmount = data.recipients
       .reduce((sum, recipient) => sum + BigInt(recipient.amount), BigInt(0))
       .toString();
 
-    // Set expiry (30 days to match smart contract)
     const submittedAt = new Date();
-    const expiresAt = new Date(
-      submittedAt.getTime() + 30 * 24 * 60 * 60 * 1000
-    );
+    // 30 days, matching the smart contract.
+    const expiresAt = new Date(submittedAt.getTime() + 30 * 24 * 60 * 60 * 1000);
 
-    // Create batch record
-    const batch = await BatchPayroll.create({
-      batchName: data.batchName,
-      organizationId: this.toObjectId(data.organizationId),
-      organizationAddress: data.organizationAddress.toLowerCase(),
-      creatorAddress: data.creatorAddress.toLowerCase(),
-      recipients: data.recipients.map((r) => ({
-        userId: r.userId ? this.toObjectId(r.userId) : undefined,
-        walletAddress: r.walletAddress.toLowerCase(),
-        amount: r.amount,
-        employeeName: r.employeeName,
-      })),
-      totalAmount,
-      quorumRequired: organization.quorum,
-      submittedAt,
-      expiresAt,
-      status: "pending",
-      approvals: [],
-      approvalCount: 0,
+    await db.transaction(async (tx) => {
+      const [batch] = await tx
+        .insert(batchPayrolls)
+        .values({
+          batchName: data.batchName,
+          organizationId: data.organizationId,
+          organizationAddress: data.organizationAddress.toLowerCase(),
+          creatorAddress: data.creatorAddress.toLowerCase(),
+          totalAmount,
+          quorumRequired: organization.quorum,
+          submittedAt,
+          expiresAt,
+          status: "pending",
+        })
+        .returning();
+
+      await tx.insert(batchPayrollRecipients).values(
+        data.recipients.map((r) => ({
+          batchId: batch.id,
+          userId: r.userId,
+          walletAddress: r.walletAddress.toLowerCase(),
+          amount: r.amount,
+          employeeName: r.employeeName,
+        }))
+      );
+
+      if (data.proposalId) {
+        await PayrollService.linkSettledProposal(tx, data.proposalId, batch);
+      }
     });
 
-    return batch;
+    return (await this.getBatchByName(data.batchName))!;
   }
 
   /**
-   * Record batch approval in database
-   * Frontend calls Dizburza.approveBatch() first
-   * Then calls this endpoint to update the record
+   * Point a passed proposal at the batch that settles it.
+   *
+   * Inside the batch's own transaction, so a claim that a proposal was settled
+   * cannot outlive the batch it names.
+   *
+   * A proposal only records that signers agreed to something. Money moves through
+   * the batch, which carries its own quorum on chain, so this link is a reference
+   * and never an instruction: nothing here reads the proposal's amount or pays
+   * anyone. The guards exist so the reference cannot lie.
    */
+  private static async linkSettledProposal(
+    tx: DbTransaction,
+    proposalId: string,
+    batch: BatchPayroll
+  ): Promise<void> {
+    const [proposal] = await tx
+      .select({
+        id: proposals.id,
+        organizationId: proposals.organizationId,
+        status: proposals.status,
+        settledBatchId: proposals.settledBatchId,
+      })
+      .from(proposals)
+      .where(eq(proposals.id, proposalId))
+      .limit(1);
+
+    // 403 rather than 404 for one belonging to another organization: proposal
+    // ids are opaque, but answering differently for one that exists is still a
+    // disclosure.
+    if (!proposal || proposal.organizationId !== batch.organizationId) {
+      throw new AppError("You cannot settle that proposal", 403);
+    }
+
+    if (proposal.status !== "passed") {
+      throw new AppError("Only a proposal that passed can be settled", 409);
+    }
+
+    if (proposal.settledBatchId && proposal.settledBatchId !== batch.id) {
+      throw new AppError("That proposal has already been settled", 409);
+    }
+
+    await tx
+      .update(proposals)
+      .set({ settledBatchId: batch.id, updatedAt: new Date() })
+      .where(eq(proposals.id, proposalId));
+  }
+
+  /**
+   * Load a batch with its recipients and approvals.
+   *
+   * approvalCount is a count of the approvals table rather than a stored
+   * field, so it cannot drift away from the rows it is meant to describe.
+   */
+  static async getBatchByName(batchName: string): Promise<BatchDetail | null> {
+    const [batch] = await db
+      .select()
+      .from(batchPayrolls)
+      .where(eq(batchPayrolls.batchName, batchName))
+      .limit(1);
+
+    if (!batch) return null;
+    return this.attachBatchChildren(batch);
+  }
+
+  private static async attachBatchChildren(batch: BatchPayroll): Promise<BatchDetail> {
+    const [recipients, approvals] = await Promise.all([
+      db
+        .select()
+        .from(batchPayrollRecipients)
+        .where(eq(batchPayrollRecipients.batchId, batch.id)),
+      db
+        .select()
+        .from(batchPayrollApprovals)
+        .where(eq(batchPayrollApprovals.batchId, batch.id))
+        .orderBy(asc(batchPayrollApprovals.approvedAt)),
+    ]);
+
+    return { ...batch, recipients, approvals, approvalCount: approvals.length };
+  }
+
+  /**
+   * Recompute status from the approval count. Called after any approval change
+   * so status and approvals can never disagree.
+   */
+  private static async syncBatchStatus(batchId: string): Promise<void> {
+    await db.execute(sql`
+      update ${batchPayrolls} b
+      set status = case
+        when (select count(*) from ${batchPayrollApprovals} a where a.batch_id = b.id)
+             >= b.quorum_required then 'approved'::batch_status
+        else 'pending'::batch_status
+      end,
+      updated_at = now()
+      where b.id = ${batchId}
+        and b.status in ('pending', 'approved')
+    `);
+  }
+
+  private static async requireBatch(batchName: string): Promise<BatchPayroll> {
+    const [batch] = await db
+      .select()
+      .from(batchPayrolls)
+      .where(eq(batchPayrolls.batchName, batchName))
+      .limit(1);
+
+    if (!batch) throw new Error("Batch not found");
+    return batch;
+  }
+
   static async recordBatchApproval(
     batchName: string,
     signerAddress: string,
     signerName: string
-  ): Promise<IBatchPayroll> {
-    const batch = await BatchPayroll.findOne({ batchName });
-    if (!batch) {
-      throw new Error("Batch not found");
-    }
+  ): Promise<BatchDetail> {
+    const batch = await this.requireBatch(batchName);
 
-    // Check if already approved by this signer
-    const alreadyApproved = batch.approvals.some(
-      (approval) =>
-        approval.signerAddress.toLowerCase() === signerAddress.toLowerCase()
-    );
+    // The unique (batch_id, signer_address) index makes double approval
+    // impossible, so an empty result means this signer already approved.
+    const inserted = await db
+      .insert(batchPayrollApprovals)
+      .values({
+        batchId: batch.id,
+        signerAddress: signerAddress.toLowerCase(),
+        signerName,
+      })
+      .onConflictDoNothing()
+      .returning({ id: batchPayrollApprovals.id });
 
-    if (alreadyApproved) {
+    if (inserted.length === 0) {
       throw new Error("Signer has already approved this batch");
     }
 
-    // Add approval
-    batch.approvals.push({
-      signerAddress: signerAddress.toLowerCase(),
-      signerName,
-      approvedAt: new Date(),
-    });
-    batch.approvalCount = batch.approvals.length;
-
-    // Check if quorum is reached
-    if (batch.approvalCount >= batch.quorumRequired) {
-      batch.status = "approved";
-    }
-
-    await batch.save();
-    return batch;
+    await this.syncBatchStatus(batch.id);
+    return (await this.getBatchByName(batchName))!;
   }
 
-  /**
-   * Record batch approval revocation in database
-   * Frontend calls Dizburza.revokeBatchApproval() first
-   * Then calls this endpoint to update the record
-   */
   static async recordBatchApprovalRevocation(
     batchName: string,
     signerAddress: string
-  ): Promise<IBatchPayroll> {
-    const batch = await BatchPayroll.findOne({ batchName });
-    if (!batch) {
-      throw new Error("Batch not found");
-    }
+  ): Promise<BatchDetail> {
+    const batch = await this.requireBatch(batchName);
 
-    if (batch.status === "executed" || batch.status === "cancelled" || batch.status === "expired") {
+    if (["executed", "cancelled", "expired"].includes(batch.status)) {
       throw new Error("Batch is finalized");
     }
 
-    const normalizedSigner = signerAddress.toLowerCase();
-    const beforeCount = batch.approvals.length;
-    batch.approvals = batch.approvals.filter(
-      (approval) => approval.signerAddress.toLowerCase() !== normalizedSigner
-    );
+    const removed = await db
+      .delete(batchPayrollApprovals)
+      .where(
+        and(
+          eq(batchPayrollApprovals.batchId, batch.id),
+          eq(batchPayrollApprovals.signerAddress, signerAddress.toLowerCase())
+        )
+      )
+      .returning({ id: batchPayrollApprovals.id });
 
-    if (batch.approvals.length === beforeCount) {
+    if (removed.length === 0) {
       throw new Error("Signer has not approved this batch");
     }
 
-    batch.approvalCount = batch.approvals.length;
-
-    if (batch.approvalCount >= batch.quorumRequired) {
-      batch.status = "approved";
-    } else {
-      batch.status = "pending";
-    }
-
-    await batch.save();
-    return batch;
+    await this.syncBatchStatus(batch.id);
+    return (await this.getBatchByName(batchName))!;
   }
 
-  /**
-   * Record batch execution in database
-   * Frontend calls Dizburza.executeBatchPayroll() first
-   * Then calls this endpoint to update the record
-   */
   static async recordBatchExecution(
     batchName: string,
     executorAddress: string,
     txHash: string
-  ): Promise<IBatchPayroll> {
-    const batch = await BatchPayroll.findOne({ batchName });
-    if (!batch) {
-      throw new Error("Batch not found");
-    }
+  ): Promise<BatchDetail> {
+    const batch = await this.requireBatch(batchName);
+    const executedAt = new Date();
 
-    // Mark as executed
-    batch.status = "executed";
-    batch.executedAt = new Date();
-    batch.executedBy = executorAddress.toLowerCase();
-    batch.txHash = txHash;
+    await db
+      .update(batchPayrolls)
+      .set({
+        status: "executed",
+        executedAt,
+        executedBy: executorAddress.toLowerCase(),
+        txHash,
+        updatedAt: executedAt,
+      })
+      .where(eq(batchPayrolls.id, batch.id));
 
-    await batch.save();
-    return batch;
+    // After the status, and outside it. A tax line is a record of a payment that
+    // has already happened, so failing to write one must not leave the batch
+    // looking unexecuted when the money has moved.
+    await TaxService.recordLinesForBatch(batch.id, executedAt).catch((error) => {
+      logger.error(`Could not record tax lines for batch ${batchName}:`, error);
+    });
+
+    return (await this.getBatchByName(batchName))!;
   }
 
-  /**
-   * Get batches for organization (from database)
-   */
+  static async recordBatchCancellation(batchName: string): Promise<BatchDetail> {
+    const batch = await this.requireBatch(batchName);
+
+    await db
+      .update(batchPayrolls)
+      .set({ status: "cancelled", updatedAt: new Date() })
+      .where(eq(batchPayrolls.id, batch.id));
+
+    return (await this.getBatchByName(batchName))!;
+  }
+
   static async getBatchesForOrganization(
     organizationId: string,
     status?: string
-  ): Promise<IBatchPayroll[]> {
-    const query: any = {
-      organizationId: this.toObjectId(organizationId),
-    };
-
+  ): Promise<Array<BatchDetail & { creatorJobRole: string | null }>> {
+    const clauses = [eq(batchPayrolls.organizationId, organizationId)];
     if (status) {
-      query.status = status;
+      clauses.push(eq(batchPayrolls.status, status as BatchPayroll["status"]));
     }
 
-    const batches = await BatchPayroll.aggregate([
-      { $match: query },
-      { $sort: { submittedAt: -1 } },
-      {
-        $lookup: {
-          from: "users",
-          localField: "creatorAddress",
-          foreignField: "walletAddress",
-          as: "creatorUser",
-        },
-      },
-      {
-        $addFields: {
-          creatorUser: { $arrayElemAt: ["$creatorUser", 0] },
-        },
-      },
-      {
-        $addFields: {
-          creatorJobRole: "$creatorUser.jobDetails.jobRole",
-        },
-      },
-      {
-        $project: {
-          creatorUser: 0,
-        },
-      },
-    ]);
+    // The creator's title comes from their employment in this organization,
+    // not from the person. Pinned to the employee row because someone can hold
+    // both a signer seat and a job here, and two rows would duplicate batches.
+    const rows = await db
+      .select({ batch: batchPayrolls, creatorJobRole: organizationMembers.jobRole })
+      .from(batchPayrolls)
+      .leftJoin(
+        organizationMembers,
+        and(
+          eq(organizationMembers.address, batchPayrolls.creatorAddress),
+          eq(organizationMembers.organizationId, batchPayrolls.organizationId),
+          eq(organizationMembers.role, "employee"),
+          eq(organizationMembers.isActive, true)
+        )
+      )
+      .where(and(...clauses))
+      .orderBy(desc(batchPayrolls.submittedAt));
 
-    return batches as unknown as IBatchPayroll[];
-  }
+    const { decimals } = await TokenService.getDefault();
 
-  /**
-   * Get batch by name (from database)
-   */
-  static async getBatchByName(
-    batchName: string
-  ): Promise<IBatchPayroll | null> {
-    return await BatchPayroll.findOne({ batchName });
-  }
-
-  /**
-   * Record batch cancellation in database
-   * Frontend calls Dizburza.cancelBatch() first
-   * Then calls this endpoint to update the record
-   */
-  static async recordBatchCancellation(
-    batchName: string
-  ): Promise<IBatchPayroll> {
-    const batch = await BatchPayroll.findOne({ batchName });
-    if (!batch) {
-      throw new Error("Batch not found");
-    }
-
-    batch.status = "cancelled";
-    await batch.save();
-    return batch;
+    return Promise.all(
+      rows.map(async ({ batch, creatorJobRole }) => ({
+        ...(await this.attachBatchChildren(batch)),
+        totalAmountFormatted: ethers.formatUnits(batch.totalAmount, decimals),
+        creatorJobRole,
+      }))
+    );
   }
 
   /**
    * Mark expired batches (cron job or manual trigger)
    */
   static async markExpiredBatches(): Promise<number> {
-    const result = await BatchPayroll.updateMany(
-      {
-        status: { $in: ["pending", "approved"] },
-        expiresAt: { $lt: new Date() },
-      },
-      {
-        $set: { status: "expired" },
-      }
-    );
+    const expired = await db
+      .update(batchPayrolls)
+      .set({ status: "expired", updatedAt: new Date() })
+      .where(
+        and(
+          inArray(batchPayrolls.status, ["pending", "approved"]),
+          lt(batchPayrolls.expiresAt, new Date())
+        )
+      )
+      .returning({ id: batchPayrolls.id });
 
-    return result.modifiedCount;
+    return expired.length;
   }
 }

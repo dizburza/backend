@@ -1,13 +1,39 @@
 import { Request, Response } from "express";
-import { User } from "../models/User.model.js";
+import { and, eq, inArray } from "drizzle-orm";
+import { db } from "../db/client.js";
+import { users } from "../db/schema.js";
 import { ApiResponse } from "../utils/response.util.js";
 import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
+import { MembershipService } from "../services/membership.service.js";
+
+const firstParam = (value: unknown): string => {
+  if (Array.isArray(value)) return (value[0] as string) ?? "";
+  return typeof value === "string" ? value : "";
+};
+
+/**
+ * All a lookup returns: enough to confirm you have the right person before
+ * paying them or adding them, and nothing more.
+ *
+ * Where someone works and which organizations they sign for used to come back
+ * here. That told anyone who knew a username who their employer was, so it is
+ * reduced to the one boolean the add-employee flow actually needs.
+ */
+const lookupColumns = {
+  username: users.username,
+  surname: users.surname,
+  firstname: users.firstname,
+  fullName: users.fullName,
+  walletAddress: users.walletAddress,
+  avatar: users.avatar,
+};
+
+const canBeEmployed = async (walletAddress: string): Promise<boolean> =>
+  (await MembershipService.employmentFor(walletAddress)) === null;
 
 export class UserController {
   static readonly resolveUsername = asyncHandler(async (req: Request, res: Response) => {
-    const { username } = req.params as any;
-    const usernameParam = Array.isArray(username) ? username[0] : username;
-    const raw = (usernameParam || "").trim();
+    const raw = firstParam(req.params.username).trim();
     const cleaned = raw.startsWith("@") ? raw.slice(1) : raw;
     const normalizedUsername = cleaned.toLowerCase();
 
@@ -16,168 +42,70 @@ export class UserController {
       return;
     }
 
-    const user = await User.findOne({
-      username: normalizedUsername,
-      isActive: true,
-    }).select("username walletAddress");
+    const [user] = await db
+      .select({ username: users.username, walletAddress: users.walletAddress })
+      .from(users)
+      .where(and(eq(users.username, normalizedUsername), eq(users.isActive, true)))
+      .limit(1);
 
     if (!user) {
       ApiResponse.error(res, "User not found", 404);
       return;
     }
 
-    ApiResponse.success(res, {
-      username: user.username,
-      walletAddress: user.walletAddress,
-    });
-  });
-
-  static readonly resolveAddresses = asyncHandler(async (req: Request, res: Response) => {
-    const { addresses } = req.body as { addresses?: string[] };
-
-    if (!Array.isArray(addresses) || addresses.length === 0) {
-      ApiResponse.error(res, "Addresses array is required", 400);
-      return;
-    }
-
-    if (addresses.length > 50) {
-      ApiResponse.error(res, "Maximum 50 addresses allowed", 400);
-      return;
-    }
-
-    const normalized = addresses
-      .filter((a) => typeof a === "string")
-      .map((a) => a.trim().toLowerCase())
-      .filter(Boolean);
-
-    const escapeRegex = (value: string) => value.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-
-    const walletAddressMatchers = normalized.map((addr) => {
-      const escaped = escapeRegex(addr);
-      return { walletAddress: new RegExp(`^${escaped}$`, "i") };
-    });
-
-    const users = await User.find({
-      ...(walletAddressMatchers.length ? { $or: walletAddressMatchers } : {}),
-      isActive: true,
-    }).select("walletAddress username");
-
-    const byAddress = new Map<string, string>();
-    for (const u of users) {
-      if (u.walletAddress && u.username) {
-        byAddress.set(u.walletAddress.toLowerCase(), u.username);
-      }
-    }
-
-    const results = normalized.map((addr) => ({
-      walletAddress: addr,
-      username: byAddress.get(addr) || null,
-    }));
-
-    ApiResponse.success(res, { results });
+    ApiResponse.success(res, user);
   });
 
   static readonly searchByUsername = asyncHandler(
     async (req: Request, res: Response) => {
-      const { username } = req.params as any;
-      const usernameParam = Array.isArray(username) ? username[0] : username;
+      const usernameParam = firstParam(req.params.username);
 
       if (!usernameParam || usernameParam.length < 3) {
         ApiResponse.error(res, "Username must be at least 3 characters", 400);
         return;
       }
 
-      const user = await User.findOne({
-        username: usernameParam.toLowerCase(),
-        isActive: true,
-      }).select(
-        "username surname firstname fullName walletAddress avatar role organizationId organizationSlug"
-      );
+      const [user] = await db
+        .select(lookupColumns)
+        .from(users)
+        .where(
+          and(eq(users.username, usernameParam.toLowerCase()), eq(users.isActive, true))
+        )
+        .limit(1);
 
       if (!user) {
         ApiResponse.error(res, "User not found", 404);
         return;
       }
 
-      const isAlreadySigner = user.organizationId && user.role === "signer";
-
       ApiResponse.success(res, {
-        user: {
-          username: user.username,
-          surname: user.surname,
-          firstname: user.firstname,
-          fullName: user.fullName,
-          walletAddress: user.walletAddress,
-          avatar: user.avatar,
-          currentOrganization: user.organizationSlug,
-        },
-        canBeAdded: !isAlreadySigner,
+        user,
+        canBeAdded: true,
+        canBeEmployed: await canBeEmployed(user.walletAddress),
       });
     }
   );
 
   static readonly searchByAddress = asyncHandler(
     async (req: Request, res: Response) => {
-      const { address } = req.params as any;
-      const addressParam = Array.isArray(address) ? address[0] : address;
-      const raw = (addressParam || "").trim();
-      const normalizedAddress = raw.toLowerCase();
+      const normalizedAddress = firstParam(req.params.address).trim().toLowerCase();
 
-      const user = await User.findOne({
-        walletAddress: normalizedAddress,
-        isActive: true,
-      }).select(
-        "username surname firstname fullName walletAddress avatar role organizationId organizationSlug"
-      );
+      const [user] = await db
+        .select(lookupColumns)
+        .from(users)
+        .where(and(eq(users.walletAddress, normalizedAddress), eq(users.isActive, true)))
+        .limit(1);
 
       if (!user) {
         ApiResponse.error(res, "User not found", 404);
         return;
       }
 
-      const isAlreadySigner = user.organizationId && user.role === "signer";
-
       ApiResponse.success(res, {
-        user: {
-          username: user.username,
-          surname: user.surname,
-          firstname: user.firstname,
-          fullName: user.fullName,
-          walletAddress: user.walletAddress,
-          avatar: user.avatar,
-          currentOrganization: user.organizationSlug,
-        },
-        canBeAdded: !isAlreadySigner,
+        user,
+        canBeAdded: true,
+        canBeEmployed: await canBeEmployed(user.walletAddress),
       });
-    }
-  );
-
-  static readonly suggestUsernames = asyncHandler(
-    async (req: Request, res: Response) => {
-      const { query } = req.query;
-
-      const queryString = typeof query === "string" ? query : "";
-      const escapedQuery = queryString.replaceAll(/[.*+?^${}()|[\]\\]/g, String.raw`\$&`);
-
-      if (!escapedQuery || queryString.length < 2) {
-        ApiResponse.success(res, { suggestions: [] });
-        return;
-      }
-
-      const users = await User.find({
-        username: { $regex: new RegExp(`^${escapedQuery}`, "i") },
-        isActive: true,
-      })
-        .select("username fullName avatar")
-        .limit(10);
-
-      const suggestions = users.map((u) => ({
-        username: u.username,
-        fullName: u.fullName,
-        avatar: u.avatar,
-      }));
-
-      ApiResponse.success(res, { suggestions });
     }
   );
 
@@ -194,23 +122,26 @@ export class UserController {
       return;
     }
 
-    const users = await User.find({
-      username: { $in: usernames.map((u: string) => u.toLowerCase()) },
-      isActive: true,
-    }).select(
-      "username surname firstname fullName walletAddress avatar email role organizationId"
-    );
+    const rows = await db
+      .select(lookupColumns)
+      .from(users)
+      .where(
+        and(
+          inArray(
+            users.username,
+            usernames.map((u: string) => String(u).toLowerCase())
+          ),
+          eq(users.isActive, true)
+        )
+      );
 
-    const results = users.map((user) => ({
-      username: user.username,
-      surname: user.surname,
-      firstname: user.firstname,
-      fullName: user.fullName,
-      walletAddress: user.walletAddress,
-      avatar: user.avatar,
-      isAlreadySigner: user.organizationId && user.role === "signer",
-      canBeAdded: !(user.organizationId && user.role === "signer"),
-    }));
+    const results = await Promise.all(
+      rows.map(async (user) => ({
+        ...user,
+        canBeAdded: true,
+        canBeEmployed: await canBeEmployed(user.walletAddress),
+      }))
+    );
 
     ApiResponse.success(res, { users: results });
   });

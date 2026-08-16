@@ -1,15 +1,29 @@
 import { Router } from "express";
 import { UserController } from "../controllers/user.controller.js";
 import { authenticate } from "../middlewares/auth.middleware.js";
+import { lookupLimiter } from "../middlewares/rateLimiter.middleware.js";
 import { validate } from "../middlewares/validation.middleware.js";
-import { param, query, body } from "express-validator";
+import { param, body } from "express-validator";
 import { ValidationUtil } from "../utils/validation.util.js";
 
 const router = Router();
 
-// Public resolve username -> wallet address
+/**
+ * Every route here is a directory lookup, so all of them are authenticated,
+ * exact match and rate limited.
+ *
+ * They used to be open to the internet. Anyone could walk the user base two
+ * characters at a time and come away with real names and wallet addresses, and
+ * since the chain is public an address is a person's whole balance and salary
+ * history. There is deliberately no prefix search and no suggestion endpoint:
+ * you look someone up by typing their username in full.
+ */
+
+// Username -> wallet address, for paying someone by @username
 router.get(
   "/resolve/:username",
+  authenticate,
+  lookupLimiter,
   validate([
     param("username")
       .trim()
@@ -19,20 +33,10 @@ router.get(
   UserController.resolveUsername
 );
 
-// Public resolve wallet addresses -> usernames
-router.post(
-  "/resolve-addresses",
-  validate([
-    body("addresses")
-      .isArray({ min: 1, max: 50 })
-      .withMessage("Addresses must be an array with 1-50 items"),
-  ]),
-  UserController.resolveAddresses
-);
-
-// Search user by username
 router.get(
   "/search/:username",
+  authenticate,
+  lookupLimiter,
   validate([
     param("username")
       .trim()
@@ -42,9 +46,10 @@ router.get(
   UserController.searchByUsername
 );
 
-// Search user by wallet address
 router.get(
   "/search-address/:address",
+  authenticate,
+  lookupLimiter,
   validate([
     param("address")
       .trim()
@@ -54,23 +59,11 @@ router.get(
   UserController.searchByAddress
 );
 
-// Auto-suggest usernames
-router.get(
-  "/suggest",
-  validate([
-    query("query")
-      .optional()
-      .trim()
-      .isLength({ min: 2 })
-      .withMessage("Query must be at least 2 characters"),
-  ]),
-  UserController.suggestUsernames
-);
-
-// Batch lookup
+// Confirming a list of usernames pasted into the signer or employee flows
 router.post(
   "/batch-lookup",
   authenticate,
+  lookupLimiter,
   validate([
     body("usernames")
       .isArray({ min: 1, max: 20 })

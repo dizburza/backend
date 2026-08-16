@@ -32,16 +32,4 @@ export class WalletController {
     ApiResponse.success(res, summary);
   });
 
-  /**
-   * POST /api/wallet/:address/sync
-   */
-  static readonly syncHistory = asyncHandler(async (req: Request, res: Response) => {
-    const { address } = req.params as any;
-    const addressParam = Array.isArray(address) ? address[0] : address;
-    const { fromBlock } = req.body;
-
-    const result = await BankingService.syncUserHistory(addressParam, fromBlock);
-
-    ApiResponse.success(res, result, "History sync initiated");
-  });
 }

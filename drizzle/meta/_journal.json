@@ -1,0 +1,69 @@
+{
+  "version": "7",
+  "dialect": "postgresql",
+  "entries": [
+    {
+      "idx": 0,
+      "version": "7",
+      "when": 1786169706918,
+      "tag": "0000_flaky_ezekiel_stane",
+      "breakpoints": true
+    },
+    {
+      "idx": 1,
+      "version": "7",
+      "when": 1786188624233,
+      "tag": "0001_add_memberships_and_tax",
+      "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1786188637365,
+      "tag": "0002_drop_legacy_signer_columns",
+      "breakpoints": true
+    },
+    {
+      "idx": 3,
+      "version": "7",
+      "when": 1786223054876,
+      "tag": "0003_add_token_registry",
+      "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1786224733565,
+      "tag": "0004_add_token_logo",
+      "breakpoints": true
+    },
+    {
+      "idx": 5,
+      "version": "7",
+      "when": 1786225336740,
+      "tag": "0005_add_proposals",
+      "breakpoints": true
+    },
+    {
+      "idx": 6,
+      "version": "7",
+      "when": 1786269165552,
+      "tag": "0006_drop_users_role",
+      "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1786287729546,
+      "tag": "0007_add_relayed_transactions",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1786310136011,
+      "tag": "0008_add_cash_links",
+      "breakpoints": true
+    }
+  ]
+}

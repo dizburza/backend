@@ -34,6 +34,9 @@ export const ValidationRules = {
     body("walletAddress")
       .custom(ValidationUtil.isValidAddress)
       .withMessage("Invalid wallet address"),
+    body("signature")
+      .matches(/^0x[0-9a-fA-F]+$/)
+      .withMessage("A wallet signature is required"),
     body("username")
       .trim()
       .optional({ values: "falsy" })
@@ -71,10 +74,11 @@ export const ValidationRules = {
       .isMobilePhone("any")
       .withMessage("Invalid phone number"),
     body("avatar").optional().isURL().withMessage("Avatar must be a valid URL"),
-    body("role")
-      .optional({ values: "falsy" })
-      .isIn(["employee", "signer", "admin"])
-      .withMessage("Invalid role"),
+    // No `role` here on purpose. It used to be accepted from the request body
+    // and written straight to users.role, which authorization then read, so
+    // registering with "admin" was self-service privilege escalation. What a
+    // person may do comes from organization_members, never from what they
+    // claimed when signing up.
   ],
 
   // Create organization validation
@@ -101,6 +105,11 @@ export const ValidationRules = {
       .withMessage("Invalid business email")
       .normalizeEmail(),
     body("businessInfo.registrationNumber").optional().trim(),
+    body("businessInfo.taxIdentificationNumber")
+      .optional({ values: "falsy" })
+      .trim()
+      .isLength({ max: 32 })
+      .withMessage("Tax identification number must be less than 32 characters"),
     body("businessInfo.registrationType")
       .optional()
       .isIn([
@@ -163,7 +172,7 @@ export const ValidationRules = {
 
   // Add employee
   addEmployee: [
-    param("id").isMongoId().withMessage("Invalid organization ID"),
+    param("id").isUUID().withMessage("Invalid organization ID"),
     body("username")
       .trim()
       .optional({ values: "falsy" })
@@ -224,7 +233,7 @@ export const ValidationRules = {
 
   // Update employee
   updateEmployee: [
-    param("id").isMongoId().withMessage("Invalid organization ID"),
+    param("id").isUUID().withMessage("Invalid organization ID"),
     param("username").trim().notEmpty().withMessage("Username is required"),
     body("jobRole")
       .optional({ values: "falsy" })
@@ -239,7 +248,7 @@ export const ValidationRules = {
 
   // Delete employee
   deleteEmployee: [
-    param("id").isMongoId().withMessage("Invalid organization ID"),
+    param("id").isUUID().withMessage("Invalid organization ID"),
     param("username").trim().notEmpty().withMessage("Username is required"),
   ],
 
@@ -248,33 +257,34 @@ export const ValidationRules = {
     body("walletAddress")
       .custom(ValidationUtil.isValidAddress)
       .withMessage("Invalid wallet address"),
-    body("signature").notEmpty().withMessage("Signature is required"),
-    body("message").notEmpty().withMessage("Message is required"),
+    body("signature")
+      .matches(/^0x[0-9a-fA-F]+$/)
+      .withMessage("A wallet signature is required"),
   ],
 
   // Transaction validation
+  // Only a txHash is accepted. Addresses, amounts and transfer direction are
+  // decoded from the on-chain receipt, so a caller cannot assert a transfer
+  // that never happened or inflate one that did.
   recordTransaction: [
-    body("txHash").notEmpty().withMessage("Transaction hash is required"),
-    body("type")
+    body("txHash")
+      .matches(/^0x[0-9a-fA-F]{64}$/)
+      .withMessage("A valid 32-byte transaction hash is required"),
+    body("description").optional().isString().isLength({ max: 500 }),
+    body("memo").optional().isString().isLength({ max: 500 }),
+    body("category")
+      .optional()
       .isIn([
-        "send",
-        "receive",
-        "payroll",
-        "qr_payment",
-        "bank_transfer",
-        "airtime",
-        "bills",
+        "salary",
+        "food",
+        "transport",
+        "utilities",
+        "entertainment",
+        "shopping",
+        "health",
+        "other",
       ])
-      .withMessage("Invalid transaction type"),
-    body("fromAddress")
-      .custom(ValidationUtil.isValidAddress)
-      .withMessage("Invalid from address"),
-    body("toAddress")
-      .custom(ValidationUtil.isValidAddress)
-      .withMessage("Invalid to address"),
-    body("amount")
-      .custom(ValidationUtil.isPositiveAmount)
-      .withMessage("Amount must be a positive number"),
+      .withMessage("Invalid category"),
   ],
 
   // Batch payroll validation
@@ -282,7 +292,7 @@ export const ValidationRules = {
     body("batchName")
       .custom(ValidationUtil.isValidBatchName)
       .withMessage("Invalid batch name"),
-    body("organizationId").isMongoId().withMessage("Invalid organization ID"),
+    body("organizationId").isUUID().withMessage("Invalid organization ID"),
     body("organizationAddress")
       .custom(ValidationUtil.isValidAddress)
       .withMessage("Invalid organization address"),
@@ -304,6 +314,7 @@ export const ValidationRules = {
       .withMessage("Employee name is required")
       .isLength({ min: 2, max: 100 })
       .withMessage("Employee name must be 2-100 characters"),
+    body("proposalId").optional({ values: "null" }).isUUID().withMessage("Invalid proposal ID"),
     body("txHash")
       .optional({ values: "falsy" })
       .isString()

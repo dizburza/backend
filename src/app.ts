@@ -1,5 +1,7 @@
 import express from "express";
+import cookieParser from "cookie-parser";
 import { corsMiddleware } from "./middlewares/cors.middleware.js";
+import { csrfGuard } from "./middlewares/csrf.middleware.js";
 import {
   helmetMiddleware,
   hppMiddleware,
@@ -32,11 +34,13 @@ app.use(
   })
 );
 app.use(express.urlencoded({ extended: true }));
+app.use(cookieParser());
 app.use(sanitizeMiddleware);
 
 // Logging & rate limiting
 app.use(requestLogger);
 app.use(generalLimiter);
+app.use(csrfGuard);
 
 // API routes
 app.use("/api", routes);

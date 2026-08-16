@@ -16,6 +16,7 @@ export class PayrollController {
         organizationAddress,
         creatorAddress,
         recipients,
+        proposalId,
       } = req.body;
 
       const batch = await PayrollService.recordBatchCreation({
@@ -24,6 +25,7 @@ export class PayrollController {
         organizationAddress,
         creatorAddress,
         recipients,
+        proposalId: proposalId ?? null,
       });
 
       ApiResponse.created(res, batch, "Batch payroll recorded successfully");
