@@ -9,7 +9,10 @@ const allowedOrigins = new Set([
 ]);
 
 export const corsOptions = {
-  origin: (origin: string | undefined, callback: Function) => {
+  origin: (
+    origin: string | undefined,
+    callback: (err: Error | null, allow?: boolean) => void
+  ) => {
     // Allow requests with no origin (mobile apps, curl, etc)
     if (!origin) return callback(null, true);
 

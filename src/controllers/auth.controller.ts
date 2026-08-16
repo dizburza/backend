@@ -2,6 +2,28 @@ import { Request, Response } from "express";
 import { AuthService } from "../services/auth.service.js";
 import { ApiResponse } from "../utils/response.util.js";
 import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
+import { clearSessionCookies, setSessionCookies } from "../utils/session.util.js";
+
+/**
+ * The token is delivered as an httpOnly cookie and deliberately not returned in
+ * the body, so a compromised script on the page cannot read it. The response
+ * still carries the user and redirect the client needs.
+ */
+const respondWithSession = (
+  res: Response,
+  result: { user: { walletAddress: string }; token: string },
+  message: string,
+  created = false
+) => {
+  setSessionCookies(res, result.token, result.user.walletAddress);
+
+  const { token: _token, ...body } = result as Record<string, unknown> & {
+    token: string;
+  };
+
+  if (created) ApiResponse.created(res, body, message);
+  else ApiResponse.success(res, body, message);
+};
 
 export class AuthController {
   /**
@@ -10,6 +32,7 @@ export class AuthController {
   static readonly register = asyncHandler(async (req: Request, res: Response) => {
     const {
       walletAddress,
+      signature,
       username,
       surname,
       firstname,
@@ -17,11 +40,11 @@ export class AuthController {
       email,
       phoneNumber,
       avatar,
-      role,
     } = req.body;
 
     const result = await AuthService.register({
       walletAddress,
+      signature,
       username,
       surname,
       firstname,
@@ -29,25 +52,28 @@ export class AuthController {
       email,
       phoneNumber,
       avatar,
-      role,
     });
 
-    ApiResponse.created(res, result, "User registered successfully");
+    respondWithSession(res, result, "User registered successfully", true);
   });
 
   /**
    * POST /api/auth/login
    */
   static readonly login = asyncHandler(async (req: Request, res: Response) => {
-    const { walletAddress, signature, message } = req.body;
+    const { walletAddress, signature } = req.body;
 
-    const result = await AuthService.login({
-      walletAddress,
-      signature,
-      message,
-    });
+    const result = await AuthService.login({ walletAddress, signature });
 
-    ApiResponse.success(res, result, "Login successful");
+    respondWithSession(res, result, "Login successful");
+  });
+
+  /**
+   * POST /api/auth/logout
+   */
+  static readonly logout = asyncHandler(async (_req: Request, res: Response) => {
+    clearSessionCookies(res);
+    ApiResponse.success(res, { loggedOut: true }, "Logged out");
   });
 
   /**
@@ -78,6 +104,11 @@ export class AuthController {
    * GET /api/auth/me
    */
   static readonly getProfile = asyncHandler(async (req: Request, res: Response) => {
-    ApiResponse.success(res, { user: req.user });
+    if (!req.user) {
+      ApiResponse.error(res, "Authentication required", 401);
+      return;
+    }
+
+    ApiResponse.success(res, await AuthService.sessionFor(req.user));
   });
 }

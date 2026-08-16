@@ -25,6 +25,7 @@ router.post(
 
 router.get("/check/:address", AuthController.checkStatus);
 router.get("/message/:address", AuthController.getAuthMessage);
+router.post("/logout", AuthController.logout);
 router.get("/me", authenticate, AuthController.getProfile);
 
 export default router;
