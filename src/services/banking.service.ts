@@ -1,8 +1,9 @@
 import { ethers } from "ethers";
-import { and, count, desc, eq, gte, lte, or, sql } from "drizzle-orm";
+import { and, count, desc, eq, gte, inArray, lte, or, sql } from "drizzle-orm";
 import crypto from "node:crypto";
 import { db } from "../db/client.js";
-import { organizations, transactions, users } from "../db/schema.js";
+import { cashLinks, organizations, transactions, users } from "../db/schema.js";
+import { ENV } from "../config/environment.js";
 import type { Transaction } from "../db/types.js";
 import {
   ChartBucket,
@@ -20,6 +21,35 @@ export class BankingService {
    * direction ("sent"/"received") is derived in the read layer instead, so a
    * single global row stays correct for both counterparties.
    */
+  /**
+   * What the caller actually paid us, in token units, keyed by transaction.
+   *
+   * Not the gas. Every write is sponsored, so the gas in `transactions.fee` is
+   * what the paymaster spent and never something the user parted with. The one
+   * charge a user does incur is the CashLink creation fee, which is taken in
+   * cNGN in the same transaction that funds the link.
+   */
+  private static async chargedFees(
+    wallet: string,
+    txHashes: string[]
+  ): Promise<Map<string, string>> {
+    if (txHashes.length === 0) return new Map();
+
+    const rows = await db
+      .select({ txHash: cashLinks.createTxHash, fee: cashLinks.feeAmount })
+      .from(cashLinks)
+      .where(
+        and(
+          inArray(cashLinks.createTxHash, txHashes),
+          eq(cashLinks.senderAddress, wallet)
+        )
+      );
+
+    return new Map(
+      rows.flatMap((row) => (row.txHash ? [[row.txHash, row.fee] as const] : []))
+    );
+  }
+
   static async classifyTransfer(fromAddress: string): Promise<{
     type: "send" | "payroll";
     organizationId?: string;
@@ -184,10 +214,24 @@ export class BankingService {
     const total = totals?.total ?? 0;
 
     const { decimals } = await TokenService.getDefault();
+    const chargedByHash = await this.chargedFees(
+      wallet,
+      rows.map((r) => r.transaction.txHash)
+    );
+
+    const escrow = ENV.CASHLINK_ADDRESS.toLowerCase();
 
     const formatted = rows.map(({ transaction, ...names }) => {
       const isOutgoing = transaction.fromAddress === wallet;
       const amount = ethers.formatUnits(transaction.amount, decimals);
+
+      // The fee belongs to the transfer that funded the link, not to the one
+      // that paid the fee itself, which is a second Transfer in the same
+      // transaction and would otherwise count it twice.
+      const charged =
+        (escrow && transaction.toAddress === escrow
+          ? chargedByHash.get(transaction.txHash)
+          : undefined) ?? "0";
 
       return {
         ...transaction,
@@ -199,6 +243,8 @@ export class BankingService {
           : null,
         direction: isOutgoing ? "sent" : "received",
         displayAmount: `${isOutgoing ? "-" : "+"}${amount}`,
+        chargedFee: charged,
+        chargedFeeFormatted: ethers.formatUnits(charged, decimals),
       };
     });
 

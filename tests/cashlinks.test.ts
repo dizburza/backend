@@ -269,3 +269,128 @@ describe("recording a link", () => {
     assert.equal(res.status, 400);
   });
 });
+
+/**
+ * What a user is charged is never the gas.
+ *
+ * Every write is sponsored, so `transactions.fee` is what the paymaster spent.
+ * The only cNGN a sender parts with beyond the amount is the link creation fee,
+ * and history has to say so rather than reporting a cost nobody paid.
+ */
+describe("the fee shown on a transaction", () => {
+  const ESCROW = "0x00000000000000000000000000000000000ca54c";
+
+  // Fresh every time. The scratch database is not reset between runs, so a
+  // literal hash collides with itself on the second run.
+  const newTxHash = () => ethers.hexlify(ethers.randomBytes(32));
+
+  /** One transfer, as the indexer would have recorded it. */
+  const seedTransfer = async (options: {
+    from: string;
+    to: string;
+    amount: string;
+    txHash: string;
+    logIndex: number;
+    fee?: string;
+  }) => {
+    await sql`
+      insert into transactions
+        (tx_hash, log_index, type, from_address, to_address, amount, currency,
+         status, fee, timestamp)
+      values (${options.txHash}, ${options.logIndex}, 'send', ${options.from},
+              ${options.to}, ${options.amount}, 'cNGN', 'confirmed',
+              ${options.fee ?? "1500000000000000"}, now())`;
+  };
+
+  it("is zero for an ordinary send, however much gas it burned", async () => {
+    const sender = await user("Sender");
+    const txHash = newTxHash();
+
+    await seedTransfer({
+      from: sender.address,
+      to: ethers.Wallet.createRandom().address.toLowerCase(),
+      amount: "5000000000",
+      txHash,
+      logIndex: 0,
+    });
+
+    const [row] = (await sender.call(`/transactions/${sender.address}`)).body.data
+      .transactions;
+
+    assert.equal(row.chargedFee, "0");
+    assert.equal(
+      Number.parseFloat(row.chargedFeeFormatted),
+      0,
+      "sponsored gas is not a charge"
+    );
+  });
+
+  it("carries the link fee on the transfer that funded the link", async () => {
+    const sender = await user("Sender");
+    const txHash = newTxHash();
+    const claimAddress = linkAddress();
+
+    // create() moves the amount to the escrow and the fee to the collector, so
+    // one transaction produces two transfers.
+    await seedTransfer({
+      from: sender.address,
+      to: ESCROW,
+      amount: "2000000000",
+      txHash,
+      logIndex: 0,
+    });
+    await seedTransfer({
+      from: sender.address,
+      to: "0x00000000000000000000000000000000000fee50",
+      amount: "3000000",
+      txHash,
+      logIndex: 1,
+    });
+
+    await sql`
+      insert into cash_links
+        (claim_address, sender_address, amount, fee_amount, status, expires_at,
+         create_tx_hash)
+      values (${claimAddress}, ${sender.address}, '2000000000', '3000000', 'open',
+              ${new Date(Date.now() + 12 * 3600_000)}, ${txHash})`;
+
+    const rows = (await sender.call(`/transactions/${sender.address}`)).body.data
+      .transactions;
+
+    const funding = rows.find((r: { toAddress: string }) => r.toAddress === ESCROW);
+    const feeTransfer = rows.find((r: { toAddress: string }) => r.toAddress !== ESCROW);
+
+    assert.equal(funding.chargedFee, "3000000");
+    assert.equal(Number.parseFloat(funding.chargedFeeFormatted), 3);
+
+    // The fee's own transfer must not repeat it, or the sender reads it twice.
+    assert.equal(feeTransfer.chargedFee, "0");
+  });
+
+  it("does not attribute someone else's link fee", async () => {
+    const sender = await user("Sender");
+    const stranger = await user("Stranger");
+    const txHash = newTxHash();
+
+    await seedTransfer({
+      from: stranger.address,
+      to: ESCROW,
+      amount: "2000000000",
+      txHash,
+      logIndex: 0,
+    });
+
+    await sql`
+      insert into cash_links
+        (claim_address, sender_address, amount, fee_amount, status, expires_at,
+         create_tx_hash)
+      values (${linkAddress()}, ${stranger.address}, '2000000000', '3000000', 'open',
+              ${new Date(Date.now() + 12 * 3600_000)}, ${txHash})`;
+
+    // The stranger sent it, so it is not the caller's charge to see.
+    const rows = (await sender.call(`/transactions/${sender.address}`)).body.data
+      .transactions;
+
+    assert.equal(rows.length, 0);
+  });
+});
