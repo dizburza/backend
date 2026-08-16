@@ -1,6 +1,7 @@
 import { Request, Response } from "express";
 import { PayrollService } from "../services/payroll.service.js";
-import { Organization } from "../models/Organization.model.js";
+import { OrganizationService } from "../services/organization.service.js";
+import { MembershipService } from "../services/membership.service.js";
 import { ApiResponse } from "../utils/response.util.js";
 import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
 
@@ -46,30 +47,53 @@ export class OrganizationController {
   );
 
   /**
-   * GET /api/organizations/signer/:address
-   * Get organization where address is a signer
+   * GET /api/organizations/identifiers/available
+   * Whether a registration number or TIN is still unclaimed
    */
-  static readonly getSignerOrganization = asyncHandler(
+  static readonly checkIdentifiers = asyncHandler(
+    async (req: Request, res: Response) => {
+      const first = (value: unknown): string | undefined => {
+        if (Array.isArray(value)) return value[0] as string | undefined;
+        return typeof value === "string" ? value : undefined;
+      };
+
+      const availability = await PayrollService.checkIdentifiers({
+        registrationNumber: first(req.query.registrationNumber),
+        taxIdentificationNumber: first(req.query.taxIdentificationNumber),
+      });
+
+      ApiResponse.success(res, availability);
+    }
+  );
+
+  /**
+   * GET /api/organizations/signer/:address
+   * Organizations this address signs for, which may be more than one
+   */
+  static readonly getSignerOrganizations = asyncHandler(
     async (req: Request, res: Response) => {
       const { address } = req.params as any;
       const addressParam = Array.isArray(address) ? address[0] : address;
 
-      const organization = await PayrollService.getOrganizationForSigner(
+      const organizations = await PayrollService.getOrganizationsForSigner(
         addressParam
       );
 
-      if (!organization) {
-        ApiResponse.error(res, "Organization not found", 404);
-        return;
-      }
-
-      ApiResponse.success(res, organization);
+      ApiResponse.success(res, { organizations, total: organizations.length });
     }
   );
 
   /**
    * GET /api/organizations/slug/:slug
-   * Get organization by slug (for organization dashboard)
+   *
+   * The dashboard resolves a slug here, so it returns the full record to
+   * signers only. It used to be unauthenticated and returned everything: the
+   * whole staff roster with wallet addresses, the business email, the
+   * registration number and the TIN. Slugs are guessable and `GET
+   * /organizations` listed them all, so that was the entire platform.
+   *
+   * Non-members get the public face of an organization and nothing about the
+   * people in it.
    */
   static readonly getBySlug = asyncHandler(async (req: Request, res: Response) => {
     const { slug } = req.params as any;
@@ -79,6 +103,16 @@ export class OrganizationController {
 
     if (!organization) {
       ApiResponse.error(res, "Organization not found", 404);
+      return;
+    }
+
+    const isSigner =
+      req.user !== undefined &&
+      (await MembershipService.isSignerOf(organization.id, req.user.walletAddress));
+
+    if (!isSigner) {
+      const { id, name, slug: orgSlug, contractAddress, isActive } = organization;
+      ApiResponse.success(res, { id, name, slug: orgSlug, contractAddress, isActive });
       return;
     }
 
@@ -96,7 +130,7 @@ export class OrganizationController {
 
     const performedBy = req.user
       ? {
-          userId: req.user._id?.toString(),
+          userId: req.user.id,
           username: req.user.username,
           walletAddress: req.user.walletAddress,
         }
@@ -141,7 +175,7 @@ export class OrganizationController {
 
     const performedBy = req.user
       ? {
-          userId: req.user._id?.toString(),
+          userId: req.user.id,
           username: req.user.username,
           walletAddress: req.user.walletAddress,
         }
@@ -168,7 +202,7 @@ export class OrganizationController {
 
     const performedBy = req.user
       ? {
-          userId: req.user._id?.toString(),
+          userId: req.user.id,
           username: req.user.username,
           walletAddress: req.user.walletAddress,
         }
@@ -181,11 +215,23 @@ export class OrganizationController {
 
   /**
    * GET /api/organizations
-   * Get all organizations (for exploration/discovery)
+   *
+   * Organizations the caller signs for, not every organization on the platform.
+   *
+   * The unfiltered list handed any signed-in user every slug, which made the
+   * slug route enumerable rather than merely guessable.
    */
   static readonly getAllOrganizations = asyncHandler(
-    async (_req: Request, res: Response) => {
-      const organizations = await PayrollService.getAllOrganizations();
+    async (req: Request, res: Response) => {
+      if (!req.user) {
+        ApiResponse.error(res, "Authentication required", 401);
+        return;
+      }
+
+      const organizations = await PayrollService.getOrganizationsForSigner(
+        req.user.walletAddress
+      );
+
       ApiResponse.success(res, organizations);
     }
   );
@@ -198,10 +244,7 @@ export class OrganizationController {
     const { id } = req.params as any;
     const idParam = Array.isArray(id) ? id[0] : id;
 
-    const organization = await Organization.findById(idParam).populate(
-      "employees",
-      "username fullName walletAddress avatar"
-    );
+    const organization = await OrganizationService.findById(idParam);
 
     if (!organization || !organization.isActive) {
       ApiResponse.error(res, "Organization not found", 404);
@@ -258,10 +301,7 @@ export class OrganizationController {
     const { address } = req.params as any;
     const addressParam = Array.isArray(address) ? address[0] : address;
 
-    const organization = await Organization.findOne({
-      creatorAddress: addressParam.toLowerCase(),
-      isActive: true,
-    }).populate("employees", "username fullName walletAddress avatar");
+    const organization = await OrganizationService.findByCreator(addressParam);
 
     if (!organization) {
       ApiResponse.error(res, "Organization not found", 404);

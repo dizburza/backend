@@ -1,6 +1,10 @@
 import { Router } from "express";
 import { OrganizationController } from "../controllers/organization.controller.js";
-import { authenticate, requireRole } from "../middlewares/auth.middleware.js";
+import { authenticate, optionalAuth } from "../middlewares/auth.middleware.js";
+import {
+  requireAddressAccess,
+  requireOrganizationSigner,
+} from "../middlewares/membership.middleware.js";
 import {
   validate,
   ValidationRules,
@@ -21,22 +25,31 @@ router.post(
 // Get all organizations
 router.get("/", authenticate, OrganizationController.getAllOrganizations);
 
+// Checked while the onboarding form is being filled in
+router.get(
+  "/identifiers/available",
+  authenticate,
+  OrganizationController.checkIdentifiers
+);
+
 // Get organization by signer address
 router.get(
   "/signer/:address",
   authenticate,
+  requireAddressAccess,
   validate([
     param("address")
       .custom(ValidationUtil.isValidAddress)
       .withMessage("Invalid wallet address"),
   ]),
-  OrganizationController.getSignerOrganization
+  OrganizationController.getSignerOrganizations
 );
 
 // Get organization by creator address
 router.get(
   "/creator/:address",
   authenticate,
+  requireAddressAccess,
   validate([
     param("address")
       .custom(ValidationUtil.isValidAddress)
@@ -45,15 +58,16 @@ router.get(
   OrganizationController.getByCreator
 );
 
-// Get organization by slug (public for discovery)
-router.get("/slug/:slug", OrganizationController.getBySlug);
+// Identifiable rather than required: the controller returns a public subset
+// to non-members and the full record to signers.
+router.get("/slug/:slug", optionalAuth, OrganizationController.getBySlug);
 
 // Get organization by ID
 router.get(
   "/:id",
   authenticate,
-  requireRole("signer", "admin"),
-  validate([param("id").isMongoId().withMessage("Invalid organization ID")]),
+  requireOrganizationSigner,
+  validate([param("id").isUUID().withMessage("Invalid organization ID")]),
   OrganizationController.getById
 );
 
@@ -61,7 +75,7 @@ router.get(
 router.post(
   "/:id/employees",
   authenticate,
-  requireRole("signer", "admin"),
+  requireOrganizationSigner,
   validate(ValidationRules.addEmployee),
   OrganizationController.addEmployee
 );
@@ -69,9 +83,9 @@ router.post(
 router.get(
   "/:id/employees",
   authenticate,
-  requireRole("signer", "admin"),
+  requireOrganizationSigner,
   validate([
-    param("id").isMongoId().withMessage("Invalid organization ID"),
+    param("id").isUUID().withMessage("Invalid organization ID"),
   ]),
   OrganizationController.getEmployees
 );
@@ -79,7 +93,7 @@ router.get(
 router.patch(
   "/:id/employees/:username",
   authenticate,
-  requireRole("signer", "admin"),
+  requireOrganizationSigner,
   validate(ValidationRules.updateEmployee),
   OrganizationController.updateEmployee
 );
@@ -87,7 +101,7 @@ router.patch(
 router.delete(
   "/:id/employees/:username",
   authenticate,
-  requireRole("signer", "admin"),
+  requireOrganizationSigner,
   validate(ValidationRules.deleteEmployee),
   OrganizationController.removeEmployee
 );
@@ -96,16 +110,16 @@ router.delete(
 router.get(
   "/:id/employees/template",
   authenticate,
-  requireRole("signer", "admin"),
-  validate([param("id").isMongoId().withMessage("Invalid organization ID")]),
+  requireOrganizationSigner,
+  validate([param("id").isUUID().withMessage("Invalid organization ID")]),
   OrganizationController.downloadEmployeeTemplate
 );
 
 router.post(
   "/:id/employees/bulk",
   authenticate,
-  requireRole("signer", "admin"),
-  validate([param("id").isMongoId().withMessage("Invalid organization ID")]),
+  requireOrganizationSigner,
+  validate([param("id").isUUID().withMessage("Invalid organization ID")]),
   OrganizationController.bulkAddEmployees
 );
 
