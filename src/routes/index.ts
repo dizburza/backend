@@ -7,6 +7,7 @@ import payrollRoutes from "./payroll.routes.js";
 import proposalRoutes from "./proposal.routes.js";
 import taxRoutes from "./tax.routes.js";
 import cashLinkRoutes from "./cashlink.routes.js";
+import inviteRoutes from "./invite.routes.js";
 import userRoutes from "./user.routes.js";
 import webhookRoutes from "./webhooks.routes.js";
 import balanceRoutes from "./realtime.routes.js";
@@ -56,6 +57,7 @@ router.use("/payroll", payrollRoutes);
 router.use("/proposals", proposalRoutes);
 router.use("/tax", taxRoutes);
 router.use("/cashlinks", cashLinkRoutes);
+router.use("/invites", inviteRoutes);
 
 router.use("/users", userRoutes);
 router.use("/webhooks", webhookRoutes);

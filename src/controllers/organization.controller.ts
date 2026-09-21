@@ -2,6 +2,7 @@ import { Request, Response } from "express";
 import { PayrollService } from "../services/payroll.service.js";
 import { OrganizationService } from "../services/organization.service.js";
 import { MembershipService } from "../services/membership.service.js";
+import { EmailVerificationService } from "../services/email-verification.service.js";
 import { ApiResponse } from "../utils/response.util.js";
 import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
 
@@ -310,4 +311,28 @@ export class OrganizationController {
 
     ApiResponse.success(res, organization);
   });
+
+  /**
+   * POST /api/organizations/email-verification/send
+   * Sends a 6-digit code to the business email typed during onboarding
+   */
+  static readonly sendEmailVerification = asyncHandler(
+    async (req: Request, res: Response) => {
+      const { email } = req.body;
+      await EmailVerificationService.send(email);
+      ApiResponse.success(res, null, "Verification code sent");
+    }
+  );
+
+  /**
+   * POST /api/organizations/email-verification/verify
+   * Confirms the code sent to the business email
+   */
+  static readonly verifyEmailVerification = asyncHandler(
+    async (req: Request, res: Response) => {
+      const { email, code } = req.body;
+      await EmailVerificationService.verify(email, code);
+      ApiResponse.success(res, null, "Email verified");
+    }
+  );
 }

@@ -1,5 +1,6 @@
 import { Router } from "express";
 import { OrganizationController } from "../controllers/organization.controller.js";
+import { InviteController } from "../controllers/invite.controller.js";
 import { authenticate, optionalAuth } from "../middlewares/auth.middleware.js";
 import {
   requireAddressAccess,
@@ -9,6 +10,7 @@ import {
   validate,
   ValidationRules,
 } from "../middlewares/validation.middleware.js";
+import { emailVerificationLimiter } from "../middlewares/rateLimiter.middleware.js";
 import { ValidationUtil } from "../utils/validation.util.js";
 import { param } from "express-validator";
 
@@ -30,6 +32,24 @@ router.get(
   "/identifiers/available",
   authenticate,
   OrganizationController.checkIdentifiers
+);
+
+// Business email verification, step 2 of onboarding, before an organization
+// row exists to check membership against.
+router.post(
+  "/email-verification/send",
+  authenticate,
+  emailVerificationLimiter,
+  validate(ValidationRules.sendEmailVerification),
+  OrganizationController.sendEmailVerification
+);
+
+router.post(
+  "/email-verification/verify",
+  authenticate,
+  emailVerificationLimiter,
+  validate(ValidationRules.verifyEmailVerification),
+  OrganizationController.verifyEmailVerification
 );
 
 // Get organization by signer address
@@ -121,6 +141,38 @@ router.post(
   requireOrganizationSigner,
   validate([param("id").isUUID().withMessage("Invalid organization ID")]),
   OrganizationController.bulkAddEmployees
+);
+
+/**
+ * The invitation link. Issuing one is a signer's act: it admits people to this
+ * organization, so the same gate as the staff roster applies.
+ */
+const organizationIdParam = [
+  param("organizationId").isUUID().withMessage("Invalid organization ID"),
+];
+
+router.get(
+  "/:organizationId/invite",
+  authenticate,
+  requireOrganizationSigner,
+  validate(organizationIdParam),
+  InviteController.current
+);
+
+router.post(
+  "/:organizationId/invite",
+  authenticate,
+  requireOrganizationSigner,
+  validate(organizationIdParam),
+  InviteController.issue
+);
+
+router.delete(
+  "/:organizationId/invite",
+  authenticate,
+  requireOrganizationSigner,
+  validate(organizationIdParam),
+  InviteController.revoke
 );
 
 export default router;
