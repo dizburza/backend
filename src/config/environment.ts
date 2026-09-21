@@ -9,7 +9,7 @@ const cleanEnvValue = (value: string | undefined): string | undefined => {
 
 export const ENV = {
   NODE_ENV: process.env.NODE_ENV || "development",
-  PORT: Number.parseInt(process.env.PORT || "5000", 10),
+  PORT: Number.parseInt(process.env.PORT || "5050", 10),
 
   DATABASE_URL: process.env.DATABASE_URL,
   DATABASE_POOL_MAX: Number.parseInt(process.env.DATABASE_POOL_MAX || "10", 10),
@@ -145,6 +145,15 @@ export const ENV = {
   // Rate Limiting
   RATE_LIMIT_WINDOW: Number.parseInt(process.env.RATE_LIMIT_WINDOW || "900000", 10), // 15 mins
   RATE_LIMIT_MAX: Number.parseInt(process.env.RATE_LIMIT_MAX || "100", 10),
+
+  // Organization email verification, sent through Resend's HTTP API. Unset and
+  // the send route reports itself disabled rather than silently discarding the
+  // code, the same convention as CASHLINK_ADDRESS.
+  RESEND_API_KEY: process.env.RESEND_API_KEY || "",
+  RESEND_API_URL: process.env.RESEND_API_URL || "https://api.resend.com/emails",
+  EMAIL_FROM_ADDRESS: process.env.EMAIL_FROM_ADDRESS || "Dizburza <onboarding@dizburza.app>",
+  OTP_EXPIRY_SECONDS: Number.parseInt(process.env.OTP_EXPIRY_SECONDS || "600", 10),
+  OTP_MAX_ATTEMPTS: Number.parseInt(process.env.OTP_MAX_ATTEMPTS || "5", 10),
 };
 
 export default ENV;

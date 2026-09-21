@@ -38,6 +38,12 @@ process.env.RPC_URL = process.env.TEST_RPC_URL ?? "http://127.0.0.1:9";
  * pricing degrades when the rate cannot be read at all.
  */
 process.env.COINGECKO_URL = "http://127.0.0.1:9";
+/**
+ * Nor may it email anyone. Same reasoning as the chain and the price API: a
+ * test that got as far as sending would deliver a real code to a real inbox.
+ */
+process.env.RESEND_API_URL = "http://127.0.0.1:9";
+process.env.RESEND_API_KEY = process.env.RESEND_API_KEY ?? "test-resend-key";
 // Every test registers users from one IP, which trips the app-wide limiter long
 // before anything interesting happens. The lookup limiter is hardcoded at 20 and
 // is deliberately left alone, since one test asserts on it.

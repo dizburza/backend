@@ -78,3 +78,19 @@ export const lookupLimiter = rateLimit({
   keyGenerator: (req: { ip?: string; userId?: string }) =>
     req.userId ? `user:${req.userId}` : keyGenerator(req),
 });
+
+/**
+ * Sending an email costs money and a resend button invites hammering it.
+ * Keyed by session like the lookup limiter, for the same reason: a shared NAT
+ * should not spend everyone else's budget on one person's resend clicks.
+ */
+export const emailVerificationLimiter = rateLimit({
+  store: storeFor("email-verify"),
+  windowMs: 60 * 1000,
+  max: 3,
+  message: "Too many verification requests, please wait a moment",
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req: { ip?: string; userId?: string }) =>
+    req.userId ? `user:${req.userId}` : keyGenerator(req),
+});
