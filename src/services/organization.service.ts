@@ -6,9 +6,18 @@ import { MembershipService } from "./membership.service.js";
 
 export type OrganizationEmployee = {
   id: string | null;
+  /**
+   * Read from the joined user row, not stored on the membership, so a person
+   * changing their own profile is reflected here rather than leaving the
+   * roster showing whatever was true the day they joined.
+   */
   username: string | null;
+  phoneNumber: string | null;
   fullName: string;
-  walletAddress: string;
+  /** Null until the invitation is claimed, which is what "Not Connected" means. */
+  walletAddress: string | null;
+  email: string | null;
+  status: "invited" | "joined";
   avatar: string | null;
 };
 
@@ -40,8 +49,12 @@ export class OrganizationService {
       employees: employees.map(({ member, user }) => ({
         id: user?.id ?? null,
         username: user?.username ?? null,
+        phoneNumber: user?.phoneNumber ?? null,
         fullName: user?.fullName ?? member.name,
         walletAddress: member.address,
+        // The address HR invited them at, which exists before the person does.
+        email: member.email,
+        status: member.status,
         avatar: user?.avatar ?? null,
       })),
     };

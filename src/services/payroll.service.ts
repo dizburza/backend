@@ -31,6 +31,7 @@ import { AppError } from "../middlewares/errorHandler.middleware.js";
 import { MembershipService } from "./membership.service.js";
 import { TokenService } from "./token.service.js";
 import { OrganizationService } from "./organization.service.js";
+import { EmailVerificationService } from "./email-verification.service.js";
 import { CryptoUtil } from "../utils/crypto.util.js";
 import { TaxService } from "./tax.service.js";
 import logger from "../utils/logger.util.js";
@@ -445,7 +446,12 @@ export class PayrollService {
     const existing = await MembershipService.listWithUsers(organizationId, "employee");
 
     return {
-      existingWallets: new Set(existing.map((e) => e.member.address)),
+      // Invitations have no address yet, so they cannot collide on one.
+      existingWallets: new Set(
+        existing
+          .map((e) => e.member.address)
+          .filter((a): a is string => Boolean(a))
+      ),
       existingUsernames: new Set(
         existing.map((e) => e.user?.username).filter((u): u is string => Boolean(u))
       ),
@@ -504,7 +510,9 @@ export class PayrollService {
         organizationId,
         userId: user.id,
         address: walletAddress,
-        name: user.fullName,
+        // The username is the one name always present, so it stands in until
+        // they have filled in a real one.
+        name: user.fullName ?? user.username,
         role: "employee",
         jobRole: row.jobRole,
         salary: await this.normalizeSalaryToChainUnits(row.salary),
@@ -541,6 +549,27 @@ export class PayrollService {
 
     if (existing) {
       return existing;
+    }
+
+    // The frontend blocks Continue on this already; checked again here so
+    // calling the endpoint directly cannot skip it, the same reasoning as
+    // rechecking the identifiers below rather than trusting the form.
+    const emailVerified = await EmailVerificationService.isVerified(data.businessEmail);
+    if (!emailVerified) {
+      throw new AppError("Business email has not been verified", 400);
+    }
+
+    // Signing in creates an account from an address alone, so the name fields
+    // are empty until onboarding asks for them. An organization records its
+    // creator as a signer by name, and there is no name to record yet.
+    const [creator] = await db
+      .select({ surname: users.surname, firstname: users.firstname })
+      .from(users)
+      .where(eq(users.walletAddress, data.creatorAddress.toLowerCase()))
+      .limit(1);
+
+    if (!creator?.surname || !creator?.firstname) {
+      throw new AppError("Complete your profile before creating an organization", 400);
     }
 
     const registrationNumber = this.normalizeIdentifier(
@@ -776,7 +805,7 @@ export class PayrollService {
       organizationId,
       userId: user.id,
       address: user.walletAddress,
-      name: user.fullName,
+      name: user.fullName ?? user.username,
       role: "employee",
       jobRole: data.jobRole,
       salary: await this.normalizeSalaryToChainUnits(data.salary),
@@ -973,7 +1002,13 @@ export class PayrollService {
           firstname: user?.firstname ?? "",
           fullName: user?.fullName ?? member.name,
           walletAddress: member.address,
-          email: user?.email ?? undefined,
+          // The invited address is the membership's, and it is the only one
+          // that exists before the person claims their row. Their own profile
+          // email takes over once it does.
+          email: user?.email ?? member.email ?? undefined,
+          phoneNumber: user?.phoneNumber ?? undefined,
+          /** "invited" is what the roster shows as Not Joined. */
+          status: member.status,
           role: "employee",
           isSigner: signerAddresses.has(member.address),
           jobDetails: {

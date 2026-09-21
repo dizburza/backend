@@ -367,7 +367,10 @@ export class ProposalService {
     const signers = await MembershipService.signersOf(proposal.organizationId);
     const voted = new Set(proposal.votes.map((v) => v.voterAddress));
 
+    // A signer who has not claimed their invitation has no address, so there is
+    // nothing on chain that could vote for them.
     return signers
+      .filter((s): s is typeof s & { address: string } => Boolean(s.address))
       .filter((s) => !voted.has(s.address))
       .map((s) => ({ address: s.address, name: s.name }));
   }

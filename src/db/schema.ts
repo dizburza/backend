@@ -39,6 +39,16 @@ export const membershipRole = pgEnum("membership_role", [
   "employee",
 ]);
 
+/**
+ * Whether the person behind a membership has claimed it. HR seeds a row from a
+ * name and an email, and it stays `invited` until someone opens the invite link
+ * and attaches a wallet to it.
+ */
+export const membershipStatus = pgEnum("membership_status", [
+  "invited",
+  "joined",
+]);
+
 export const transactionType = pgEnum("transaction_type", [
   "send",
   "receive",
@@ -330,6 +340,28 @@ export const organizations = pgTable(
 );
 
 /**
+ * A 6-digit code proving the sender controls the business email typed during
+ * onboarding, before any organization row exists to attach it to. Keyed by
+ * email rather than an organization id for that reason.
+ *
+ * Only the hash is stored, the same reasoning as the auth challenge nonce:
+ * a copy of this table should be worth nothing to whoever takes it.
+ */
+export const organizationEmailVerifications = pgTable(
+  "organization_email_verifications",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    email: text("email").notNull(),
+    codeHash: varchar("code_hash", { length: 64 }).notNull(),
+    attempts: integer("attempts").notNull().default(0),
+    verifiedAt: timestamp("verified_at", { withTimezone: true }),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [index("organization_email_verifications_email_idx").on(t.email)]
+);
+
+/**
  * Every relationship between a person and an organization, signer or employee.
  *
  * The two have different cardinality and the table encodes that. Signing is
@@ -340,6 +372,12 @@ export const organizations = pgTable(
  *
  * Keyed by address rather than user id: a signer can be named during setup
  * before they have registered, and the address is what the contract knows.
+ *
+ * A row can also exist before anyone is behind it. HR imports employees from a
+ * spreadsheet of names, emails and salaries, so the row carries the employment
+ * terms and waits at `status = 'invited'` with no address until that person
+ * opens the invite link and claims it. Claiming attaches an identity to terms
+ * that were already set, and must never be able to write the terms themselves.
  */
 export const organizationMembers = pgTable(
   "organization_members",
@@ -350,7 +388,15 @@ export const organizationMembers = pgTable(
       .references(() => organizations.id, { onDelete: "cascade" }),
     /** Filled in once the address has an account, null before that. */
     userId: uuid("user_id").references(() => users.id, { onDelete: "set null" }),
-    address: address("address").notNull(),
+    /**
+     * Null while the row is an invitation. HR seeds an employee from a CSV
+     * knowing a name and an email, and the wallet does not exist until that
+     * person signs up and claims the row.
+     */
+    address: address("address"),
+    /** How the invitation reaches them, and how a claim finds the right row. */
+    email: text("email"),
+    status: membershipStatus("status").notNull().default("joined"),
     name: text("name").notNull(),
     role: membershipRole("role").notNull(),
 
@@ -367,19 +413,70 @@ export const organizationMembers = pgTable(
     removedAt: timestamp("removed_at", { withTimezone: true }),
   },
   (t) => [
+    // Nulls stay distinct here, which is what lets many unclaimed invitations
+    // coexist: they have no address to collide on.
     uniqueIndex("organization_members_org_address_role_key").on(
       t.organizationId,
       t.address,
       t.role
     ),
+    // One invitation per email per organization, so a CSV imported twice does
+    // not produce two rows for the same person to claim.
+    uniqueIndex("organization_members_org_email_key")
+      .on(t.organizationId, sql`lower(${t.email})`)
+      .where(sql`email is not null and is_active`),
     // The employment cap. Enforced in the database rather than in a service
-    // check, so a concurrent add cannot slip a second employer past it.
+    // check, so a concurrent add cannot slip a second employer past it. An
+    // unclaimed invitation has no address, so it does not consume the cap:
+    // someone may be invited by several organizations and employed by one.
     uniqueIndex("organization_members_single_employment_key")
       .on(t.address)
       .where(sql`role = 'employee' and is_active`),
     index("organization_members_address_active_idx").on(t.address, t.isActive),
     index("organization_members_org_role_idx").on(t.organizationId, t.role, t.isActive),
     index("organization_members_user_idx").on(t.userId),
+    index("organization_members_org_status_idx").on(t.organizationId, t.status),
+  ]
+);
+
+/**
+ * The link HR sends so staff can claim the rows already seeded for them.
+ *
+ * One live link per organization, and the token is a bearer credential: anyone
+ * holding it can present themselves as staff of this organization. That is the
+ * same shape as a CashLink, and the same rule applies, which is that the token
+ * is the whole secret and nothing else gates it.
+ *
+ * What bounds the damage is what a claim can do, not who can reach the link. A
+ * claim only ever attaches an identity to an invitation that already exists,
+ * matched by the email HR entered. Someone with the token but no seeded row
+ * gets nothing, so a leaked link does not create employees or let anyone write
+ * their own salary.
+ *
+ * `revokedAt` is how a leaked link is closed, and issuing a new one revokes the
+ * old: the partial unique index below allows exactly one live token per
+ * organization.
+ */
+export const organizationInvites = pgTable(
+  "organization_invites",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    /** Random, urlsafe, and the only thing the link carries. */
+    token: text("token").notNull(),
+    createdBy: address("created_by").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    /** Null means it does not expire on its own. */
+    expiresAt: timestamp("expires_at", { withTimezone: true }),
+    revokedAt: timestamp("revoked_at", { withTimezone: true }),
+  },
+  (t) => [
+    uniqueIndex("organization_invites_token_key").on(t.token),
+    uniqueIndex("organization_invites_live_key")
+      .on(t.organizationId)
+      .where(sql`revoked_at is null`),
   ]
 );
 
@@ -388,10 +485,20 @@ export const users = pgTable(
   {
     id: uuid("id").defaultRandom().primaryKey(),
     walletAddress: address("wallet_address").notNull(),
+    /**
+     * Never null, because it is how one person finds another to pay them. It is
+     * generated from the address when nobody has given a name yet.
+     */
     username: varchar("username", { length: 40 }).notNull(),
-    surname: text("surname").notNull(),
-    firstname: text("firstname").notNull(),
-    fullName: text("full_name").notNull(),
+    /**
+     * Null until the person fills in their profile. Signing in creates the row
+     * from an address alone, so a placeholder here would be a fake name that
+     * nothing could tell apart from a real one, and the gate that asks for the
+     * real one would have nothing to test.
+     */
+    surname: text("surname"),
+    firstname: text("firstname"),
+    fullName: text("full_name"),
     email: text("email"),
     phoneNumber: text("phone_number"),
     avatar: text("avatar"),

@@ -64,6 +64,27 @@
       "when": 1786310136011,
       "tag": "0008_add_cash_links",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789905070890,
+      "tag": "0009_smiling_mystique",
+      "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789945011556,
+      "tag": "0010_hard_patch",
+      "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789946340506,
+      "tag": "0011_far_nightshade",
+      "breakpoints": true
     }
   ]
 }
