@@ -31,13 +31,13 @@ COPY drizzle.config.ts ./
 # Never run as root. The node image already provides this user.
 USER node
 
-EXPOSE 5000
+EXPOSE 5050
 
 # The indexer and SSE hub need SIGTERM to release the leader lock and close
 # open streams, so PID 1 must forward signals rather than swallow them.
 STOPSIGNAL SIGTERM
 
 HEALTHCHECK --interval=30s --timeout=5s --start-period=15s --retries=3 \
-  CMD node -e "fetch('http://localhost:5000/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
+  CMD node -e "fetch('http://localhost:'+(process.env.PORT||5050)+'/api/health').then(r=>process.exit(r.ok?0:1)).catch(()=>process.exit(1))"
 
 CMD ["node", "dist/server.js"]

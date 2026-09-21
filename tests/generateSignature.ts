@@ -6,7 +6,7 @@ dotenv.config();
 
 // 5000 is the API. 3000 is the frontend, which was the old default and sent
 // every challenge request to the wrong process.
-const API_URL = process.env.API_URL || "http://localhost:5000";
+const API_URL = process.env.API_URL || "http://localhost:5050";
 
 function validateEnv() {
   const requiredVars = ["USER_PRIVATE_KEY", "USER_ADDRESS"];

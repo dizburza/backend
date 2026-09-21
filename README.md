@@ -65,9 +65,9 @@ Edit `.env` with your configuration:
 
 ```env
 # Server
-PORT=5000
+PORT=5050
 NODE_ENV=development
-API_URL=http://localhost:5000
+API_URL=http://localhost:5050
 
 # Database
 MONGODB_URI=mongodb://localhost:27017/dizburza
@@ -109,7 +109,7 @@ npm start
 ✅ Blockchain listener started successfully
 🚀 Server running on port 5000
 📡 Environment: development
-🌍 API URL: http://localhost:5000/api
+🌍 API URL: http://localhost:5050/api
 ```
 
 ---
@@ -118,13 +118,13 @@ npm start
 
 ### Base URL
 ```
-http://localhost:5000/api
+http://localhost:5050/api
 ```
 
 ### Quick Test
 ```bash
 # Health check
-curl http://localhost:5000/api/health
+curl http://localhost:5050/api/health
 ```
 
 **Response:**
@@ -215,7 +215,7 @@ src/
 
 ```bash
 # Register a user
-curl -X POST http://localhost:5000/api/auth/register \
+curl -X POST http://localhost:5050/api/auth/register \
   -H "Content-Type: application/json" \
   -d '{
     "walletAddress": "0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1",
@@ -225,7 +225,7 @@ curl -X POST http://localhost:5000/api/auth/register \
   }'
 
 # Get balance
-curl http://localhost:5000/api/wallet/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1/balance
+curl http://localhost:5050/api/wallet/0x742d35Cc6634C0532925a3b844Bc9e7595f0bEb1/balance
 ```
 
 ---

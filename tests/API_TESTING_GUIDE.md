@@ -29,7 +29,7 @@ cd backend
 # .env needs:
 #   USER_PRIVATE_KEY=0x...
 #   USER_ADDRESS=0x...
-#   API_URL=http://localhost:5000
+#   API_URL=http://localhost:5050
 npm run generateSignature
 ```
 
@@ -57,7 +57,7 @@ forever, so REST Client hangs waiting for a response that never completes:
 
 ```bash
 curl -N -b "dz_session=<cookie>" \
-  "http://localhost:5000/api/events/stream?addresses=0xYOUR_ADDRESS"
+  "http://localhost:5050/api/events/stream?addresses=0xYOUR_ADDRESS"
 ```
 
 You may only subscribe to your own wallet and the treasuries of organizations
