@@ -1,5 +1,5 @@
 import jwt, { SignOptions } from "jsonwebtoken";
-import { eq, lt } from "drizzle-orm";
+import { and, eq, lt, ne } from "drizzle-orm";
 import { db } from "../db/client.js";
 import { authChallenges, organizations, users } from "../db/schema.js";
 import type { Organization, OrganizationWithSigners, User } from "../db/types.js";
@@ -9,6 +9,7 @@ import { CryptoUtil } from "../utils/crypto.util.js";
 import crypto from "node:crypto";
 import { UserRegistrationData, LoginData } from "../types/user.types.js";
 import { MembershipService } from "./membership.service.js";
+import { isUniqueViolation } from "../utils/pgError.util.js";
 
 /**
  * What the caller is right now, derived from memberships on every check rather
@@ -150,6 +151,29 @@ export class AuthService {
   }
 
   /**
+   * The account behind a wallet that has just signed in for the first time.
+   *
+   * Only the address is known here, so the name fields stay null and onboarding
+   * asks for them. The username cannot wait, since it is how someone is found
+   * to be paid, so it is derived from the address and can be changed later.
+   *
+   * The caller must have verified the signature first.
+   */
+  private static async createFromAddress(walletAddress: string) {
+    const username = `user_${walletAddress.slice(2, 10)}`.toLowerCase();
+
+    const [user] = await db
+      .insert(users)
+      .values({ walletAddress, username })
+      .returning();
+
+    // Invitations naming this address were waiting for an account to attach to.
+    await MembershipService.linkUser(user.id, user.walletAddress);
+
+    return [user];
+  }
+
+  /**
    * Where a session lands and what it may do, worked out from memberships.
    *
    * Signing wins over employment when someone is both, since the enterprise
@@ -198,23 +222,33 @@ export class AuthService {
     organization?: Organization | OrganizationWithSigners | null;
     memberships: SessionMembership[];
   }> {
+    const walletAddress = data.walletAddress.toLowerCase();
+
     const [existing] = await db
       .select()
       .from(users)
-      .where(eq(users.walletAddress, data.walletAddress.toLowerCase()))
+      .where(eq(users.walletAddress, walletAddress))
       .limit(1);
 
-    if (!existing || !existing.isActive) {
+    if (existing && !existing.isActive) {
       throw new AppError("User not found or inactive. Please register first.", 404);
     }
 
+    // Before anything is written. Proving control of the address is what makes
+    // signing in safe to turn into account creation: without it anyone could
+    // name an address and be handed an account for it.
     await this.consumeChallenge(data.walletAddress, data.signature);
 
-    const [user] = await db
-      .update(users)
-      .set({ lastLoginAt: new Date(), updatedAt: new Date() })
-      .where(eq(users.id, existing.id))
-      .returning();
+    // Signing in with an unknown wallet creates the account. All we know is the
+    // address, so the profile is empty and a gate asks for it later, which is
+    // the only way in: there is no separate registration step any more.
+    const [user] = existing
+      ? await db
+          .update(users)
+          .set({ lastLoginAt: new Date(), updatedAt: new Date() })
+          .where(eq(users.id, existing.id))
+          .returning()
+      : await this.createFromAddress(walletAddress);
 
     const token = this.generateToken(user);
     const context = await this.resolveContext(user);
@@ -226,6 +260,95 @@ export class AuthService {
       organization: context.organization,
       memberships: context.memberships,
     };
+  }
+
+  /**
+   * The details onboarding collects, for the person the session belongs to.
+   *
+   * A username is taken once and typed by other people to pay them, so a change
+   * is refused rather than quietly suffixed the way the generated one is.
+   */
+  static async updateProfile(
+    userId: string,
+    data: {
+      surname?: string;
+      firstname?: string;
+      email?: string;
+      phoneNumber?: string;
+      username?: string;
+    }
+  ): Promise<User> {
+    const updates: Partial<typeof users.$inferInsert> = { updatedAt: new Date() };
+
+    if (data.surname !== undefined) updates.surname = data.surname.trim();
+    if (data.firstname !== undefined) updates.firstname = data.firstname.trim();
+    if (data.email !== undefined) updates.email = data.email.trim().toLowerCase();
+    if (data.phoneNumber !== undefined) updates.phoneNumber = data.phoneNumber.trim();
+
+    if (data.username !== undefined) {
+      const username = data.username.trim().toLowerCase();
+
+      const [taken] = await db
+        .select({ id: users.id })
+        .from(users)
+        .where(and(eq(users.username, username), ne(users.id, userId)))
+        .limit(1);
+
+      if (taken) {
+        throw new AppError("That username is taken", 409);
+      }
+
+      updates.username = username;
+    }
+
+    if (updates.surname || updates.firstname) {
+      const [current] = await db
+        .select({ surname: users.surname, firstname: users.firstname })
+        .from(users)
+        .where(eq(users.id, userId))
+        .limit(1);
+
+      const surname = updates.surname ?? current?.surname;
+      const firstname = updates.firstname ?? current?.firstname;
+      if (surname && firstname) {
+        updates.fullName = `${firstname} ${surname}`;
+      }
+    }
+
+    // The check above is for a useful message, not for correctness: two people
+    // submitting the same username at once both pass it. The unique index is
+    // what actually decides, so its violation becomes the same 409 rather than
+    // a 500.
+    let user: User | undefined;
+    try {
+      [user] = await db
+        .update(users)
+        .set(updates)
+        .where(eq(users.id, userId))
+        .returning();
+    } catch (error) {
+      if (isUniqueViolation(error)) {
+        throw new AppError("That username is taken", 409);
+      }
+      throw error;
+    }
+
+    if (!user) {
+      throw new AppError("User not found", 404);
+    }
+
+    return user;
+  }
+
+  /** Whether a username is free, for telling someone before they submit. */
+  static async isUsernameAvailable(username: string, userId: string): Promise<boolean> {
+    const [taken] = await db
+      .select({ id: users.id })
+      .from(users)
+      .where(and(eq(users.username, username.trim().toLowerCase()), ne(users.id, userId)))
+      .limit(1);
+
+    return !taken;
   }
 
   /**

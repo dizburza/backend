@@ -1,12 +1,17 @@
-export type RegistrationType =
-  | "Sole Proprietorship"
-  | "Partnership"
-  | "Limited Liability Company (Ltd)"
-  | "Public Limited Company (PLC)"
-  | "Nonprofit / NGO"
-  | "Cooperative"
-  | "Government Owned"
-  | "Business Name";
+/**
+ * Which register the organization's number comes from, not what it is
+ * incorporated as. It pairs with `registrationNumber`, so "CAC" plus
+ * RC1234567 reads as one fact.
+ *
+ * The strings are what the onboarding form submits, so the validator reads
+ * this rather than keeping a second copy that can drift out of step.
+ */
+export const REGISTRATION_TYPES = [
+  "CAC — Corporate Affairs Commission",
+  "TIN — Tax Identification Number",
+] as const;
+
+export type RegistrationType = (typeof REGISTRATION_TYPES)[number];
 
 export type Industry =
   | "Information Technology"

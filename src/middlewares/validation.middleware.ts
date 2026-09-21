@@ -8,6 +8,7 @@ import {
 } from "express-validator";
 import { ApiResponse } from "../utils/response.util.js";
 import { ValidationUtil } from "../utils/validation.util.js";
+import { REGISTRATION_TYPES } from "../types/payroll.types.js";
 
 export const validate = (validations: ValidationChain[]) => {
   return async (req: Request, res: Response, next: NextFunction): Promise<void> => {
@@ -30,6 +31,32 @@ export const ValidationRules = {
     .withMessage("Invalid wallet address"),
 
   // Registration validation
+  updateProfile: [
+    body("surname")
+      .optional()
+      .trim()
+      .isLength({ min: 1, max: 60 })
+      .withMessage("Surname must be 1-60 characters"),
+    body("firstname")
+      .optional()
+      .trim()
+      .isLength({ min: 1, max: 60 })
+      .withMessage("First name must be 1-60 characters"),
+    body("email").optional().trim().isEmail().withMessage("Invalid email"),
+    body("phoneNumber")
+      .optional()
+      .trim()
+      .isLength({ min: 7, max: 20 })
+      .withMessage("Phone number must be 7-20 characters"),
+    body("username")
+      .optional()
+      .trim()
+      .isLength({ min: 3, max: 40 })
+      .withMessage("Username must be 3-40 characters")
+      .matches(/^[a-z0-9_]+$/i)
+      .withMessage("Username may only contain letters, numbers and underscores"),
+  ],
+
   register: [
     body("walletAddress")
       .custom(ValidationUtil.isValidAddress)
@@ -112,16 +139,7 @@ export const ValidationRules = {
       .withMessage("Tax identification number must be less than 32 characters"),
     body("businessInfo.registrationType")
       .optional()
-      .isIn([
-        "Sole Proprietorship",
-        "Partnership",
-        "Limited Liability Company (Ltd)",
-        "Public Limited Company (PLC)",
-        "Nonprofit / NGO",
-        "Cooperative",
-        "Government Owned",
-        "Business Name",
-      ])
+      .isIn(REGISTRATION_TYPES)
       .withMessage("Invalid registration type"),
     body("signers")
       .isArray({ min: 1 })
@@ -335,5 +353,19 @@ export const ValidationRules = {
       .optional()
       .isInt({ min: 1, max: 100 })
       .withMessage("Limit must be between 1 and 100"),
+  ],
+
+  sendEmailVerification: [
+    body("email").trim().isEmail().withMessage("A valid email is required").normalizeEmail(),
+  ],
+
+  verifyEmailVerification: [
+    body("email").trim().isEmail().withMessage("A valid email is required").normalizeEmail(),
+    body("code")
+      .trim()
+      .isLength({ min: 6, max: 6 })
+      .withMessage("Code must be 6 digits")
+      .isNumeric()
+      .withMessage("Code must be 6 digits"),
   ],
 };

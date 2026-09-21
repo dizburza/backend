@@ -111,4 +111,55 @@ export class AuthController {
 
     ApiResponse.success(res, await AuthService.sessionFor(req.user));
   });
+
+  /**
+   * GET /api/auth/username-available?username=
+   *
+   * Authenticated and rate limited like a directory lookup, because it is one:
+   * it confirms whether a username exists. Exact match only, so it cannot be
+   * walked, and it answers about the caller's own candidate rather than
+   * anybody's profile.
+   */
+  static readonly checkUsername = asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) {
+      ApiResponse.error(res, "Authentication required", 401);
+      return;
+    }
+
+    const username = String(req.query.username ?? "").trim();
+
+    if (!/^[a-z0-9_]{3,40}$/i.test(username)) {
+      ApiResponse.success(res, { available: false, reason: "invalid" });
+      return;
+    }
+
+    const available = await AuthService.isUsernameAvailable(username, req.user.id);
+    ApiResponse.success(res, { available });
+  });
+
+  /**
+   * PATCH /api/auth/me
+   *
+   * The person editing is the session, never the body. Taking an address from
+   * the request would let anyone rewrite anyone's name and username, and the
+   * username is what people type to pay each other.
+   */
+  static readonly updateProfile = asyncHandler(async (req: Request, res: Response) => {
+    if (!req.user) {
+      ApiResponse.error(res, "Authentication required", 401);
+      return;
+    }
+
+    const { surname, firstname, email, phoneNumber, username } = req.body;
+
+    const user = await AuthService.updateProfile(req.user.id, {
+      surname,
+      firstname,
+      email,
+      phoneNumber,
+      username,
+    });
+
+    ApiResponse.success(res, await AuthService.sessionFor(user), "Profile updated");
+  });
 }
