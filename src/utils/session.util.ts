@@ -28,17 +28,30 @@ const parseExpiry = (value: string): number => {
 
 export const sessionMaxAgeMs = () => parseExpiry(ENV.JWT_EXPIRY);
 
+/**
+ * Whether the browser will accept a Secure cookie, which is a question about
+ * the scheme the app is served over and not about NODE_ENV.
+ *
+ * Reading the environment instead is a quiet way to break sign-in: a
+ * production build served over plain http, which is what running the container
+ * locally is, sets Secure on both cookies and the browser discards them. The
+ * session then exists on the server, no cookie comes back, and the client waits
+ * forever for a sign-in that already succeeded.
+ */
+const cookiesMustBeSecure = () =>
+  (ENV.FRONTEND_URL || "").trim().toLowerCase().startsWith("https://");
+
 export const setSessionCookies = (
   res: Response,
   token: string,
   walletAddress: string
 ) => {
   const maxAge = sessionMaxAgeMs();
-  const isProduction = ENV.NODE_ENV === "production";
+  const secure = cookiesMustBeSecure();
 
   res.cookie(SESSION_COOKIE, token, {
     httpOnly: true,
-    secure: isProduction,
+    secure,
     // Lax rather than Strict: the app is reached by ordinary top-level
     // navigation, and Strict would drop the cookie on the first click in from
     // an external link.
@@ -52,7 +65,7 @@ export const setSessionCookies = (
     expiresAt: Date.now() + maxAge,
   }), {
     httpOnly: false,
-    secure: isProduction,
+    secure,
     sameSite: "lax",
     path: "/",
     maxAge,
