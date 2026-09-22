@@ -592,6 +592,10 @@ export class PayrollService {
         timestamp: Date.now(),
       });
 
+    const creatorSalary = data.creatorEmployment
+      ? await this.normalizeSalaryToChainUnits(data.creatorEmployment.salary)
+      : "0";
+
     // One transaction so a failure part-way cannot leave an organization with
     // no signers, or signers pointing at an organization that does not exist.
     return db.transaction(async (tx) => {
@@ -662,6 +666,27 @@ export class PayrollService {
         })),
         tx
       );
+
+      // A second membership, not a change to the signer seat above: signing is
+      // uncapped and employment is capped at one, so they are separate rows by
+      // design. Inside the same transaction, since a creator who is on payroll
+      // everywhere except the roster is the bug this exists to prevent.
+      if (data.creatorEmployment) {
+        const creatorAccount = accountByAddress.get(creatorAddress);
+
+        await MembershipService.upsert(
+          {
+            organizationId: organization.id,
+            userId: creatorAccount?.id ?? null,
+            address: creatorAddress,
+            name: byAddress.get(creatorAddress)?.name ?? creatorAccount?.fullName ?? "Creator",
+            role: "employee",
+            jobRole: data.creatorEmployment.jobRole,
+            salary: creatorSalary,
+          },
+          tx
+        );
+      }
 
       return organization;
     });
@@ -996,6 +1021,10 @@ export class PayrollService {
 
         return {
           _id: user?.id ?? member.id,
+          // The row a "Send Reminder" or "Add as signer" action addresses.
+          // `_id` switches to the user id once someone has joined, which is a
+          // different id than the membership row those actions act on.
+          membershipId: member.id,
           username: user?.username ?? "",
           displayUsername: this.getDisplayUsername(user?.username),
           surname: user?.surname ?? "",

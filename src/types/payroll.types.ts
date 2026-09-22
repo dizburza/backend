@@ -64,6 +64,16 @@ export interface CreateOrganizationInput {
     defaultPaymentDay?: number;
     timeZone?: string;
   };
+  /**
+   * The creator's own employment, when they said they are on the payroll.
+   * Signing and employment are separate memberships, so this writes a second
+   * row rather than changing the signer seat.
+   */
+  creatorEmployment?: {
+    jobRole: string;
+    /** The human figure, scaled to base units here where decimals are known. */
+    salary: string;
+  };
 }
 
 // ✅ STORAGE TYPE - What goes into the database (includes backend-generated fields)
