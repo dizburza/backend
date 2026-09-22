@@ -404,6 +404,11 @@ export const organizationMembers = pgTable(
     address: address("address"),
     /** How the invitation reaches them, and how a claim finds the right row. */
     email: text("email"),
+    /**
+     * Held on the membership rather than read from the user, since it is
+     * collected while seeding the row and there is no user behind it yet.
+     */
+    phone: text("phone"),
     status: membershipStatus("status").notNull().default("joined"),
     name: text("name").notNull(),
     role: membershipRole("role").notNull(),

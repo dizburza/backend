@@ -136,12 +136,22 @@ router.get(
   OrganizationController.downloadEmployeeTemplate
 );
 
+// Checking a batch is the same act as adding one, and it reads the roster to
+// answer, so it is gated the same way.
 router.post(
-  "/:id/employees/bulk",
+  "/:id/employees/review",
   authenticate,
   requireOrganizationSigner,
   validate([param("id").isUUID().withMessage("Invalid organization ID")]),
-  OrganizationController.bulkAddEmployees
+  OrganizationController.reviewEmployees
+);
+
+router.post(
+  "/:id/employees/batch",
+  authenticate,
+  requireOrganizationSigner,
+  validate([param("id").isUUID().withMessage("Invalid organization ID")]),
+  OrganizationController.addEmployees
 );
 
 /**

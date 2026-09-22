@@ -3,8 +3,9 @@ import { PayrollService } from "../services/payroll.service.js";
 import { OrganizationService } from "../services/organization.service.js";
 import { MembershipService } from "../services/membership.service.js";
 import { EmailVerificationService } from "../services/email-verification.service.js";
+import { EmployeeInviteService } from "../services/employee-invite.service.js";
 import { ApiResponse } from "../utils/response.util.js";
-import { asyncHandler } from "../middlewares/errorHandler.middleware.js";
+import { AppError, asyncHandler } from "../middlewares/errorHandler.middleware.js";
 
 export class OrganizationController {
   /**
@@ -255,44 +256,63 @@ export class OrganizationController {
     ApiResponse.success(res, organization);
   });
 
-  /**
-   * GET /api/organizations/:id/employees/template
-   * Download CSV template for employee bulk upload
-   */
+  /** The columns a staff upload is expected to carry. */
   static readonly downloadEmployeeTemplate = asyncHandler(async (_req: Request, res: Response) => {
-    const csvTemplate = PayrollService.generateEmployeeCSVTemplate();
-    
     res.setHeader("Content-Type", "text/csv");
     res.setHeader("Content-Disposition", 'attachment; filename="employee-template.csv"');
-    res.send(csvTemplate);
+    res.send(EmployeeInviteService.csvTemplate());
   });
 
   /**
-   * POST /api/organizations/:id/employees/bulk
-   * Bulk upload employees from CSV
+   * Says what a batch would do without doing it, so nobody sends twenty
+   * invitations to find out that six rows were incomplete.
    */
-  static readonly bulkAddEmployees = asyncHandler(async (req: Request, res: Response) => {
-    const { id } = req.params as any;
-    const idParam = Array.isArray(id) ? id[0] : id;
-    const { csvData } = req.body;
+  static readonly reviewEmployees = asyncHandler(async (req: Request, res: Response) => {
+    const organizationId = OrganizationController.idFrom(req);
+    const rows = OrganizationController.rowsFrom(req);
 
-    if (!csvData || typeof csvData !== "string") {
-      ApiResponse.error(res, "CSV data is required", 400);
-      return;
-    }
-
-    try {
-      const results = await PayrollService.bulkAddEmployees(idParam, csvData);
-      ApiResponse.success(res, results, `Added ${results.added} employees. ${results.errors.length} errors.`);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "Failed to process CSV";
-      if (message.includes("Missing required fields") || message.includes("Invalid CSV")) {
-        ApiResponse.error(res, message, 400);
-      } else {
-        throw error;
-      }
-    }
+    ApiResponse.success(res, await EmployeeInviteService.review(organizationId, rows));
   });
+
+  /**
+   * Seeds the memberships and mails the join link.
+   *
+   * Answers 200 with a per-row account even when some rows failed: one bad
+   * line must not discard the rest of the file, so the outcome is data rather
+   * than an error code.
+   */
+  static readonly addEmployees = asyncHandler(async (req: Request, res: Response) => {
+    const organizationId = OrganizationController.idFrom(req);
+    const rows = OrganizationController.rowsFrom(req);
+
+    const results = await EmployeeInviteService.seed(
+      organizationId,
+      rows,
+      req.user!.walletAddress
+    );
+
+    ApiResponse.success(res, results);
+  });
+
+  private static idFrom(req: Request): string {
+    const { id } = req.params;
+    return Array.isArray(id) ? id[0] : id;
+  }
+
+  /** Accepts either a parsed list or the raw file, so one route serves both. */
+  private static rowsFrom(req: Request) {
+    const { employees, csvData } = req.body ?? {};
+
+    if (typeof csvData === "string" && csvData.trim()) {
+      return EmployeeInviteService.parseCsv(csvData);
+    }
+
+    if (Array.isArray(employees) && employees.length > 0) {
+      return employees;
+    }
+
+    throw new AppError("Send either a list of employees or a CSV file", 400);
+  }
 
   /**
    * GET /api/organizations/creator/:address

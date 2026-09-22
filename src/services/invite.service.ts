@@ -268,20 +268,40 @@ export class InviteService {
 
     const invite =
       (await this.current(organizationId)) ?? (await this.issue(organizationId, requestedBy));
-    const url = `${ENV.FRONTEND_URL}/join/${invite.token}`;
 
+    await this.sendInviteEmail({
+      to: member.email,
+      name: member.name,
+      organizationName: organization.name,
+      token: invite.token,
+    });
+  }
+
+  /**
+   * One live token serves the whole organization, so everyone seeded in a
+   * batch is mailed the same link and the row they claim is found by their
+   * email rather than by the link itself.
+   */
+  static async sendInviteEmail(params: {
+    to: string;
+    name: string | null;
+    organizationName: string;
+    token: string;
+  }): Promise<void> {
     if (!ENV.RESEND_API_KEY) {
       throw new AppError("Email is not configured", 503);
     }
+
+    const url = `${ENV.FRONTEND_URL}/join/${params.token}`;
 
     try {
       await axios.post(
         ENV.RESEND_API_URL,
         {
           from: ENV.EMAIL_FROM_ADDRESS,
-          to: [member.email],
-          subject: `Join ${organization.name} on Dizburza`,
-          text: `${member.name ? `Hi ${member.name},\n\n` : ""}${organization.name} added you to their staff on Dizburza. Use this link to join and claim your account:\n\n${url}`,
+          to: [params.to],
+          subject: `Join ${params.organizationName} on Dizburza`,
+          text: `${params.name ? `Hi ${params.name},\n\n` : ""}${params.organizationName} added you to their staff on Dizburza. Use this link to join and claim your account:\n\n${url}`,
         },
         {
           headers: { Authorization: `Bearer ${ENV.RESEND_API_KEY}` },
@@ -290,8 +310,8 @@ export class InviteService {
       );
     } catch (error) {
       const detail = error instanceof Error ? error.message : String(error);
-      logger.error(`Could not send invite reminder: ${detail}`);
-      throw new AppError("Could not send the reminder email", 502);
+      logger.error(`Could not send invitation to ${params.to}: ${detail}`);
+      throw new AppError("Could not send the invitation email", 502);
     }
   }
 }

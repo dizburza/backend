@@ -25,6 +25,7 @@ export class MembershipService {
     userId: organizationMembers.userId,
     address: organizationMembers.address,
     email: organizationMembers.email,
+    phone: organizationMembers.phone,
     status: organizationMembers.status,
     name: organizationMembers.name,
     role: organizationMembers.role,
