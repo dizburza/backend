@@ -10,6 +10,7 @@ import crypto from "node:crypto";
 import { UserRegistrationData, LoginData } from "../types/user.types.js";
 import { MembershipService } from "./membership.service.js";
 import { isUniqueViolation } from "../utils/pgError.util.js";
+import logger from "../utils/logger.util.js";
 
 /**
  * What the caller is right now, derived from memberships on every check rather
@@ -224,34 +225,49 @@ export class AuthService {
   }> {
     const walletAddress = data.walletAddress.toLowerCase();
 
-    const [existing] = await db
-      .select()
-      .from(users)
-      .where(eq(users.walletAddress, walletAddress))
-      .limit(1);
+    // Started together because the lookup is a read and decides nothing on its
+    // own: the challenge below is still what has to pass before a single write
+    // happens. Run one after the other they were two waits on a database far
+    // enough away for that to be most of the sign-in.
+    const [lookup] = await Promise.all([
+      db.select().from(users).where(eq(users.walletAddress, walletAddress)).limit(1),
+      this.consumeChallenge(data.walletAddress, data.signature),
+    ]);
+
+    const existing = lookup[0];
 
     if (existing && !existing.isActive) {
       throw new AppError("User not found or inactive. Please register first.", 404);
     }
 
-    // Before anything is written. Proving control of the address is what makes
-    // signing in safe to turn into account creation: without it anyone could
-    // name an address and be handed an account for it.
-    await this.consumeChallenge(data.walletAddress, data.signature);
-
     // Signing in with an unknown wallet creates the account. All we know is the
     // address, so the profile is empty and a gate asks for it later, which is
     // the only way in: there is no separate registration step any more.
-    const [user] = existing
-      ? await db
+    // Stamping the login is bookkeeping and nothing in the response reads it,
+    // so for someone who already exists it runs alongside the membership read
+    // rather than in front of it. A new account cannot: the row has to exist
+    // before there is anything to resolve memberships for.
+    let user: User;
+    let context: Awaited<ReturnType<typeof AuthService.resolveContext>>;
+
+    if (existing) {
+      const [, resolved] = await Promise.all([
+        db
           .update(users)
           .set({ lastLoginAt: new Date(), updatedAt: new Date() })
-          .where(eq(users.id, existing.id))
-          .returning()
-      : await this.createFromAddress(walletAddress);
+          .where(eq(users.id, existing.id)),
+        this.resolveContext(existing),
+      ]);
+
+      user = existing;
+      context = resolved;
+    } else {
+      const [created] = await this.createFromAddress(walletAddress);
+      user = created;
+      context = await this.resolveContext(created);
+    }
 
     const token = this.generateToken(user);
-    const context = await this.resolveContext(user);
 
     return {
       user: { ...user, role: context.role },
@@ -440,10 +456,6 @@ export class AuthService {
     // hold a second valid nonce open.
     const expiresAt = new Date(issuedAt.getTime() + CHALLENGE_TTL_MS);
 
-    // Postgres has no TTL index, so abandoned challenges are swept here. One
-    // extra delete per issue keeps the table bounded without a cron job.
-    await db.delete(authChallenges).where(lt(authChallenges.expiresAt, new Date()));
-
     await db
       .insert(authChallenges)
       .values({ address, nonce, issuedAt, expiresAt })
@@ -451,6 +463,16 @@ export class AuthService {
         target: authChallenges.address,
         set: { nonce, issuedAt, expiresAt },
       });
+
+    // Postgres has no TTL index, so abandoned challenges are swept here rather
+    // than by a cron job. Not awaited: it is bookkeeping for rows nobody can
+    // use, and waiting for it put a second round trip in front of every person
+    // signing in. One row per address means the table cannot grow unbounded
+    // while a sweep is in flight.
+    void db
+      .delete(authChallenges)
+      .where(lt(authChallenges.expiresAt, new Date()))
+      .catch((error) => logger.warn(`Challenge sweep failed: ${String(error)}`));
 
     return CryptoUtil.generateAuthMessage(address, nonce, issuedAt, ENV.AUTH_DOMAIN);
   }
