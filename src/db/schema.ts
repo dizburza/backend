@@ -84,6 +84,14 @@ export const batchStatus = pgEnum("batch_status", [
   "expired",
 ]);
 
+/** Mirrors the contract's SignerProposal: proposed, executed, or timed out. */
+export const signerChangeStatus = pgEnum("signer_change_status", [
+  "pending",
+  "approved",
+  "executed",
+  "expired",
+]);
+
 export const auditAction = pgEnum("audit_action", ["ADD", "UPDATE", "REMOVE"]);
 
 export const taxStatus = pgEnum("tax_status", ["computed", "remitted", "failed"]);
@@ -670,6 +678,81 @@ export const batchPayrollApprovals = pgTable(
 );
 
 /**
+ * A record of Dizburza's on-chain SignerProposal: adding or removing a signer
+ * once the organization is past bootstrap and every signer-set change needs
+ * quorum. This is not the `proposals` table. That one is a pure off-chain
+ * governance record with no chain counterpart; a signer change is a real
+ * on-chain multisig flow (proposeSignerChange / approveSignerChange /
+ * executeSignerChange), so this mirrors batch_payrolls instead: a passive
+ * ledger of what the contract already did, written after each call succeeds,
+ * never the thing that decides it.
+ *
+ * `proposalId` is the contract's own id, `keccak256(subject, isRemoval,
+ * signerEpoch)`, so a row here can always be resolved back to the call that
+ * approves or executes it. `signerEpoch` is snapshotted for the same reason a
+ * batch snapshots quorum: a proposal is judged by the epoch it was raised
+ * under, and a later signer change bumping the epoch must not let a stale
+ * approval be replayed against a different signer set.
+ */
+export const signerChangeProposals = pgTable(
+  "signer_change_proposals",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    organizationId: uuid("organization_id")
+      .notNull()
+      .references(() => organizations.id, { onDelete: "cascade" }),
+    organizationAddress: address("organization_address").notNull(),
+    proposalId: varchar("proposal_id", { length: 66 }).notNull(),
+
+    subjectAddress: address("subject_address").notNull(),
+    subjectName: text("subject_name").notNull(),
+    isRemoval: boolean("is_removal").notNull().default(false),
+    signerEpoch: integer("signer_epoch").notNull(),
+
+    createdByAddress: address("created_by_address").notNull(),
+    quorumRequired: integer("quorum_required").notNull(),
+    status: signerChangeStatus("status").notNull().default("pending"),
+
+    submittedAt: timestamp("submitted_at", { withTimezone: true }).notNull().defaultNow(),
+    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
+    executedAt: timestamp("executed_at", { withTimezone: true }),
+    executedBy: address("executed_by"),
+    txHash: txHash("tx_hash"),
+
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow()
+      .$onUpdate(() => new Date()),
+  },
+  (t) => [
+    uniqueIndex("signer_change_proposals_proposal_id_key").on(t.proposalId),
+    index("signer_change_proposals_org_status_idx").on(t.organizationId, t.status),
+  ]
+);
+
+export const signerChangeApprovals = pgTable(
+  "signer_change_approvals",
+  {
+    id: uuid("id").defaultRandom().primaryKey(),
+    signerChangeId: uuid("signer_change_id")
+      .notNull()
+      .references(() => signerChangeProposals.id, { onDelete: "cascade" }),
+    signerAddress: address("signer_address").notNull(),
+    signerName: text("signer_name").notNull(),
+    approvedAt: timestamp("approved_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (t) => [
+    // One approval per signer per proposal, same reasoning as batch approvals:
+    // approvalCount is a count() of these rows, never a stored field.
+    uniqueIndex("signer_change_approvals_change_signer_key").on(
+      t.signerChangeId,
+      t.signerAddress
+    ),
+  ]
+);
+
+/**
  * Cached balances, one row per address per token.
  *
  * `decimals` is copied from the token rather than joined. This table exists so
@@ -1023,6 +1106,24 @@ export const batchPayrollsRelations = relations(batchPayrolls, ({ one, many }) =
   }),
   recipients: many(batchPayrollRecipients),
   approvals: many(batchPayrollApprovals),
+}));
+
+export const signerChangeProposalsRelations = relations(
+  signerChangeProposals,
+  ({ one, many }) => ({
+    organization: one(organizations, {
+      fields: [signerChangeProposals.organizationId],
+      references: [organizations.id],
+    }),
+    approvals: many(signerChangeApprovals),
+  })
+);
+
+export const signerChangeApprovalsRelations = relations(signerChangeApprovals, ({ one }) => ({
+  signerChange: one(signerChangeProposals, {
+    fields: [signerChangeApprovals.signerChangeId],
+    references: [signerChangeProposals.id],
+  }),
 }));
 
 export const batchPayrollRecipientsRelations = relations(

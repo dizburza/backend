@@ -368,4 +368,48 @@ export const ValidationRules = {
       .isNumeric()
       .withMessage("Code must be 6 digits"),
   ],
+
+  // Signer change proposal validation
+  recordSignerChangeProposal: [
+    body("proposalId")
+      .isString()
+      .matches(/^0x[0-9a-fA-F]{64}$/)
+      .withMessage("Invalid proposal ID"),
+    body("organizationAddress")
+      .custom(ValidationUtil.isValidAddress)
+      .withMessage("Invalid organization address"),
+    body("subjectAddress")
+      .custom(ValidationUtil.isValidAddress)
+      .withMessage("Invalid subject address"),
+    body("subjectName")
+      .trim()
+      .notEmpty()
+      .withMessage("Subject name is required")
+      .isLength({ min: 1, max: 100 })
+      .withMessage("Subject name must be 1-100 characters"),
+    body("isRemoval").isBoolean().withMessage("isRemoval must be a boolean"),
+    body("signerEpoch").isInt({ min: 0 }).withMessage("Invalid signer epoch"),
+    body("createdByName")
+      .trim()
+      .notEmpty()
+      .withMessage("createdByName is required")
+      .isLength({ min: 1, max: 100 })
+      .withMessage("createdByName must be 1-100 characters"),
+  ],
+
+  recordSignerChangeApproval: [
+    body("signerName")
+      .trim()
+      .notEmpty()
+      .withMessage("Signer name is required")
+      .isLength({ min: 1, max: 100 })
+      .withMessage("Signer name must be 1-100 characters"),
+  ],
+
+  recordSignerChangeExecution: [
+    body("txHash")
+      .isString()
+      .matches(/^0x[0-9a-fA-F]{64}$/)
+      .withMessage("Invalid transaction hash"),
+  ],
 };

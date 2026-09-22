@@ -1,6 +1,7 @@
 import { Router } from "express";
 import { OrganizationController } from "../controllers/organization.controller.js";
 import { InviteController } from "../controllers/invite.controller.js";
+import { SignerChangeController } from "../controllers/signer-change.controller.js";
 import { authenticate, optionalAuth } from "../middlewares/auth.middleware.js";
 import {
   requireAddressAccess,
@@ -173,6 +174,67 @@ router.delete(
   requireOrganizationSigner,
   validate(organizationIdParam),
   InviteController.revoke
+);
+
+/** Re-sends the live invite link to one person still waiting on it. */
+router.post(
+  "/:organizationId/employees/:membershipId/remind",
+  authenticate,
+  requireOrganizationSigner,
+  validate([
+    param("organizationId").isUUID().withMessage("Invalid organization ID"),
+    param("membershipId").isUUID().withMessage("Invalid membership ID"),
+  ]),
+  InviteController.remind
+);
+
+/**
+ * Signer changes. The frontend calls proposeSignerChange / approveSignerChange
+ * / executeSignerChange on chain first; these routes only record what already
+ * happened, the same relationship the batch routes have to the payroll
+ * contract calls.
+ */
+router.get(
+  "/:id/signer-changes",
+  authenticate,
+  requireOrganizationSigner,
+  validate([param("id").isUUID().withMessage("Invalid organization ID")]),
+  SignerChangeController.list
+);
+
+router.post(
+  "/:id/signer-changes",
+  authenticate,
+  requireOrganizationSigner,
+  validate([
+    param("id").isUUID().withMessage("Invalid organization ID"),
+    ...ValidationRules.recordSignerChangeProposal,
+  ]),
+  SignerChangeController.recordProposal
+);
+
+router.post(
+  "/:id/signer-changes/:proposalId/approve",
+  authenticate,
+  requireOrganizationSigner,
+  validate([
+    param("id").isUUID().withMessage("Invalid organization ID"),
+    param("proposalId").matches(/^0x[0-9a-fA-F]{64}$/).withMessage("Invalid proposal ID"),
+    ...ValidationRules.recordSignerChangeApproval,
+  ]),
+  SignerChangeController.recordApproval
+);
+
+router.post(
+  "/:id/signer-changes/:proposalId/execute",
+  authenticate,
+  requireOrganizationSigner,
+  validate([
+    param("id").isUUID().withMessage("Invalid organization ID"),
+    param("proposalId").matches(/^0x[0-9a-fA-F]{64}$/).withMessage("Invalid proposal ID"),
+    ...ValidationRules.recordSignerChangeExecution,
+  ]),
+  SignerChangeController.recordExecution
 );
 
 export default router;

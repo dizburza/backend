@@ -17,6 +17,8 @@ import type {
   proposalVotes,
   relayedTransactions,
   pendingTransactions,
+  signerChangeApprovals,
+  signerChangeProposals,
   transactions,
   users,
 } from "./schema.js";
@@ -42,6 +44,12 @@ export type NewBatchPayrollRecipient = typeof batchPayrollRecipients.$inferInser
 
 export type BatchPayrollApproval = typeof batchPayrollApprovals.$inferSelect;
 export type NewBatchPayrollApproval = typeof batchPayrollApprovals.$inferInsert;
+
+export type SignerChangeProposal = typeof signerChangeProposals.$inferSelect;
+export type NewSignerChangeProposal = typeof signerChangeProposals.$inferInsert;
+
+export type SignerChangeApproval = typeof signerChangeApprovals.$inferSelect;
+export type NewSignerChangeApproval = typeof signerChangeApprovals.$inferInsert;
 
 export type Balance = typeof balances.$inferSelect;
 export type Proposal = typeof proposals.$inferSelect;
