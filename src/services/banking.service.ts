@@ -245,6 +245,7 @@ export class BankingService {
         displayAmount: `${isOutgoing ? "-" : "+"}${amount}`,
         chargedFee: charged,
         chargedFeeFormatted: ethers.formatUnits(charged, decimals),
+        feeFormatted: ethers.formatUnits(transaction.fee ?? "0", decimals),
       };
     });
 
