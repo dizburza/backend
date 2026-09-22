@@ -156,6 +156,17 @@ export const ValidationRules = {
       .notEmpty()
       .withMessage("Signer role is required"),
     body("quorum").isInt({ min: 1 }).withMessage("Quorum must be at least 1"),
+    // Only present when the creator said they are on the payroll, and then
+    // both terms are required: a membership with no salary is not employment.
+    body("creatorEmployment.jobRole")
+      .optional()
+      .trim()
+      .notEmpty()
+      .withMessage("Job role is required to be added to the payroll"),
+    body("creatorEmployment.salary")
+      .optional()
+      .isFloat({ gt: 0 })
+      .withMessage("Salary must be greater than zero"),
     body("metadata.industry")
       .optional()
       .isIn([

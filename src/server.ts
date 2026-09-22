@@ -38,9 +38,14 @@ try {
   // Optional. Without it realtime events stay inside this process.
   await eventHub.connect();
 
-  // Start blockchain listener (low-latency, best-effort)
+  // Latency hint on top of the indexer, so it follows the same switch: with
+  // indexing off there is no cursor for it to run ahead of.
   const blockchainListener = new BlockchainListener();
-  await blockchainListener.start();
+  if (ENV.INDEXER_ENABLED) {
+    await blockchainListener.start();
+  } else {
+    logger.warn("⏸️  Blockchain listener disabled via INDEXER_ENABLED=false");
+  }
 
   // Source of truth for history. Backfills on boot.
   const indexer = new IndexerService();

@@ -25,6 +25,7 @@ export class OrganizationController {
         quorum,
         metadata,
         settings,
+        creatorEmployment,
       } = req.body;
 
       const organization = await PayrollService.createOrganization({
@@ -38,6 +39,7 @@ export class OrganizationController {
         quorum,
         metadata,
         settings,
+        creatorEmployment,
       });
 
       ApiResponse.created(
