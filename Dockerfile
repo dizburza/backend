@@ -28,6 +28,11 @@ COPY --from=build /app/dist ./dist
 COPY --from=build /app/drizzle ./drizzle
 COPY drizzle.config.ts ./
 
+# Winston writes here whenever NODE_ENV is not production, and compose's
+# env_file can override the ENV above. Created and owned before dropping
+# privileges so that path cannot crash the container on boot.
+RUN mkdir -p logs && chown -R node:node /app
+
 # Never run as root. The node image already provides this user.
 USER node
 
