@@ -26,6 +26,17 @@ export class InviteController {
     ApiResponse.success(res, null, "Invitation link revoked");
   });
 
+  /** POST /api/organizations/:organizationId/employees/:membershipId/remind */
+  static readonly remind = asyncHandler(async (req: Request, res: Response) => {
+    await InviteService.remind(
+      req.params.organizationId,
+      req.params.membershipId,
+      req.walletAddress!
+    );
+
+    ApiResponse.success(res, null, "Reminder sent");
+  });
+
   /**
    * GET /api/invites/:token
    *

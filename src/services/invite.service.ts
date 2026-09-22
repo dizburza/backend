@@ -1,9 +1,12 @@
 import crypto from "node:crypto";
+import axios from "axios";
 import { and, eq, isNull, sql } from "drizzle-orm";
+import { ENV } from "../config/environment.js";
 import { db } from "../db/client.js";
 import { organizationInvites, organizationMembers, organizations } from "../db/schema.js";
 import { AppError } from "../middlewares/errorHandler.middleware.js";
 import { isUniqueViolation } from "../utils/pgError.util.js";
+import logger from "../utils/logger.util.js";
 
 /**
  * The link an organization sends so the staff it has already entered can attach
@@ -216,5 +219,79 @@ export class InviteService {
     }
 
     return { organizationId: invite.organizationId, alreadyJoined: false };
+  }
+
+  /**
+   * Email the live link to one person waiting on it.
+   *
+   * Refuses rather than silently creating one: a reminder is for someone HR
+   * already seeded a row for, and issuing a link on the fly here would let
+   * this route double as an undocumented way to invite people, bypassing
+   * whatever the staff roster is meant to enforce before a seat exists.
+   */
+  static async remind(
+    organizationId: string,
+    membershipId: string,
+    requestedBy: string
+  ): Promise<void> {
+    const [member] = await db
+      .select({
+        email: organizationMembers.email,
+        name: organizationMembers.name,
+        status: organizationMembers.status,
+      })
+      .from(organizationMembers)
+      .where(
+        and(
+          eq(organizationMembers.id, membershipId),
+          eq(organizationMembers.organizationId, organizationId),
+          eq(organizationMembers.isActive, true)
+        )
+      )
+      .limit(1);
+
+    if (!member) throw new AppError("Employee not found", 404);
+    if (member.status !== "invited") {
+      throw new AppError("This person has already joined", 409);
+    }
+    if (!member.email) {
+      throw new AppError("This employee has no email on file", 400);
+    }
+
+    const [organization] = await db
+      .select({ name: organizations.name })
+      .from(organizations)
+      .where(eq(organizations.id, organizationId))
+      .limit(1);
+
+    if (!organization) throw new AppError("Organization not found", 404);
+
+    const invite =
+      (await this.current(organizationId)) ?? (await this.issue(organizationId, requestedBy));
+    const url = `${ENV.FRONTEND_URL}/join/${invite.token}`;
+
+    if (!ENV.RESEND_API_KEY) {
+      throw new AppError("Email is not configured", 503);
+    }
+
+    try {
+      await axios.post(
+        ENV.RESEND_API_URL,
+        {
+          from: ENV.EMAIL_FROM_ADDRESS,
+          to: [member.email],
+          subject: `Join ${organization.name} on Dizburza`,
+          text: `${member.name ? `Hi ${member.name},\n\n` : ""}${organization.name} added you to their staff on Dizburza. Use this link to join and claim your account:\n\n${url}`,
+        },
+        {
+          headers: { Authorization: `Bearer ${ENV.RESEND_API_KEY}` },
+          timeout: 8000,
+        }
+      );
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : String(error);
+      logger.error(`Could not send invite reminder: ${detail}`);
+      throw new AppError("Could not send the reminder email", 502);
+    }
   }
 }
