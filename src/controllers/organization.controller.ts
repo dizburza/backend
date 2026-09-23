@@ -218,6 +218,28 @@ export class OrganizationController {
   });
 
   /**
+   * PATCH /api/organizations/:id/employees/:username/reactivate
+   * Undo a suspension, restoring the employment terms as they stood.
+   */
+  static readonly reactivateEmployee = asyncHandler(async (req: Request, res: Response) => {
+    const { id, username } = req.params as any;
+    const idParam = Array.isArray(id) ? id[0] : id;
+    const usernameParam = Array.isArray(username) ? username[0] : username;
+
+    const performedBy = req.user
+      ? {
+          userId: req.user.id,
+          username: req.user.username,
+          walletAddress: req.user.walletAddress,
+        }
+      : undefined;
+
+    const user = await PayrollService.reactivateEmployee(idParam, usernameParam, performedBy);
+
+    ApiResponse.success(res, user, "Employee reactivated successfully");
+  });
+
+  /**
    * GET /api/organizations
    *
    * Organizations the caller signs for, not every organization on the platform.

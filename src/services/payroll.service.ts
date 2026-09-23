@@ -539,6 +539,30 @@ export class PayrollService {
     return row;
   }
 
+  /** The suspended counterpart of findEmployee, for the one path that needs one. */
+  private static async findSuspendedEmployee(
+    organizationId: string,
+    username: string
+  ): Promise<{ user: User; membership: OrganizationMember }> {
+    const [row] = await db
+      .select({ user: users, membership: organizationMembers })
+      .from(organizationMembers)
+      .innerJoin(users, eq(users.id, organizationMembers.userId))
+      .where(
+        and(
+          eq(organizationMembers.organizationId, organizationId),
+          eq(organizationMembers.role, "employee"),
+          eq(organizationMembers.isActive, false),
+          eq(users.username, username.toLowerCase()),
+          eq(users.isActive, true)
+        )
+      )
+      .limit(1);
+
+    if (!row) throw new AppError("Suspended employee not found in this organization", 404);
+    return row;
+  }
+
   /**
    * End someone's employment with an organization.
    *
@@ -575,6 +599,38 @@ export class PayrollService {
   }
 
   /**
+   * Undo a suspension. Restores the row exactly as it stood, since the whole
+   * point of a reactivate rather than a re-add is that nothing about their
+   * employment terms changed while they were suspended.
+   */
+  static async reactivateEmployee(
+    organizationId: string,
+    username: string,
+    performedBy?: { userId?: string; username?: string; walletAddress?: string }
+  ) {
+    const { user } = await this.findSuspendedEmployee(organizationId, username);
+
+    const restored = await MembershipService.reactivate(
+      organizationId,
+      user.walletAddress,
+      "employee"
+    );
+
+    await db.insert(employeeAuditLogs).values({
+      organizationId,
+      employeeUserId: user.id,
+      employeeUsername: user.username,
+      employeeWalletAddress: user.walletAddress,
+      action: "ADD",
+      performedByUserId: performedBy?.userId,
+      performedByUsername: performedBy?.username,
+      performedByWalletAddress: performedBy?.walletAddress?.toLowerCase(),
+    });
+
+    return { ...user, membership: restored };
+  }
+
+  /**
    * Employees of an organization, with their employment terms and last audit.
    *
    * `isSigner` is a real lookup rather than a constant: holding a signer seat
@@ -586,7 +642,7 @@ export class PayrollService {
       throw new AppError("Organization not found", 404);
     }
 
-    const employees = await MembershipService.listWithUsers(organizationId, "employee");
+    const employees = await MembershipService.listWithUsers(organizationId, "employee", true);
     const { decimals, symbol } = await TokenService.getDefault();
     const signerAddresses = new Set(
       (await MembershipService.signersOf(organizationId)).map((s) => s.address)
@@ -654,6 +710,7 @@ export class PayrollService {
           status: member.status,
           role: "employee",
           isSigner: signerAddresses.has(member.address),
+          isActive: member.isActive,
           jobDetails: {
             jobRole: member.jobRole ?? undefined,
             salary: member.salary ?? "0",
@@ -675,7 +732,9 @@ export class PayrollService {
             : null,
         };
       }),
-      totalEmployees: employees.length,
+      // The list now carries suspended rows too, so the count is filtered
+      // separately rather than taken from its length.
+      totalEmployees: employees.filter((e) => e.member.isActive).length,
       signersCount: signerAddresses.size,
     };
   }

@@ -281,6 +281,12 @@ export const ValidationRules = {
     param("username").trim().notEmpty().withMessage("Username is required"),
   ],
 
+  // Reactivate a suspended employee
+  reactivateEmployee: [
+    param("id").isUUID().withMessage("Invalid organization ID"),
+    param("username").trim().notEmpty().withMessage("Username is required"),
+  ],
+
   // Login validation
   login: [
     body("walletAddress")

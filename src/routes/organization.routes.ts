@@ -127,6 +127,14 @@ router.delete(
   OrganizationController.removeEmployee
 );
 
+router.patch(
+  "/:id/employees/:username/reactivate",
+  authenticate,
+  requireOrganizationSigner,
+  validate(ValidationRules.reactivateEmployee),
+  OrganizationController.reactivateEmployee
+);
+
 // CSV Bulk Upload Routes
 router.get(
   "/:id/employees/template",

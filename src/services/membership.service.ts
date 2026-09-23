@@ -290,6 +290,35 @@ export class MembershipService {
   }
 
   /**
+   * Undo a deactivation, restoring the terms that were already on the row.
+   *
+   * This is the reactivate path, not upsert: upsert overwrites job role,
+   * salary, department and employee id with whatever the caller passes, which
+   * is right for re-adding someone under new terms but wrong for undoing a
+   * suspension, where the point is that nothing about their employment changed.
+   */
+  static async reactivate(
+    organizationId: string,
+    walletAddress: string,
+    role: MembershipRole
+  ): Promise<OrganizationMember | null> {
+    const [row] = await db
+      .update(organizationMembers)
+      .set({ isActive: true, removedAt: null })
+      .where(
+        and(
+          eq(organizationMembers.organizationId, organizationId),
+          eq(organizationMembers.address, walletAddress.toLowerCase()),
+          eq(organizationMembers.role, role),
+          eq(organizationMembers.isActive, false)
+        )
+      )
+      .returning();
+
+    return row ?? null;
+  }
+
+  /**
    * Attach a newly registered user to memberships created before they signed up.
    *
    * Signers are named by address during setup, often before the person has an
@@ -307,8 +336,19 @@ export class MembershipService {
       );
   }
 
-  /** Members joined to their user rows, for lists that show people. */
-  static async listWithUsers(organizationId: string, role: MembershipRole) {
+  /**
+   * Members joined to their user rows, for lists that show people.
+   *
+   * `includeInactive` stays false everywhere but the employee roster: a
+   * suspended employee has to be findable to be reactivated, but nothing else
+   * that lists members, signer sets, payroll recipients, should start counting
+   * someone who was removed.
+   */
+  static async listWithUsers(
+    organizationId: string,
+    role: MembershipRole,
+    includeInactive = false
+  ) {
     return db
       .select({
         member: organizationMembers,
@@ -331,7 +371,7 @@ export class MembershipService {
         and(
           eq(organizationMembers.organizationId, organizationId),
           eq(organizationMembers.role, role),
-          eq(organizationMembers.isActive, true)
+          includeInactive ? undefined : eq(organizationMembers.isActive, true)
         )
       )
       .orderBy(desc(organizationMembers.joinedAt));
