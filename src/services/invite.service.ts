@@ -189,7 +189,20 @@ export class InviteService {
     }
 
     if (pending.status === "joined") {
-      return { organizationId: invite.organizationId, alreadyJoined: true };
+      // The same session finishing a claim it already made, safe to answer
+      // like any other success. `users.email` has no unique index, so a second
+      // account can carry the same address and land here after someone else
+      // already completed this row: that is not idempotent, it is a collision,
+      // and saying so is what lets them fix their own email instead of being
+      // told they joined an organization they never actually reached.
+      if (pending.userId === userId) {
+        return { organizationId: invite.organizationId, alreadyJoined: true };
+      }
+
+      throw new AppError(
+        "Someone has already completed registration with this email. If this is you, sign in with that account instead. Otherwise, check the email on your profile.",
+        409
+      );
     }
 
     try {

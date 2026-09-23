@@ -257,6 +257,7 @@ export class PayrollService {
           id: users.id,
           walletAddress: users.walletAddress,
           fullName: users.fullName,
+          email: users.email,
         })
         .from(users)
         .where(inArray(users.walletAddress, [...byAddress.keys(), creatorAddress]));
@@ -270,6 +271,11 @@ export class PayrollService {
         });
       }
 
+      // A signer who already has an account gets their email on the row now;
+      // one added by address before registering gets it later, from
+      // `MembershipService.linkUser` when they sign up. Either way, the point
+      // is the same: an invite claim matches on email, so a signer with none
+      // on file can never be told "you already have a seat here."
       await MembershipService.insertMany(
         [...byAddress].map(([memberAddress, member]) => ({
           organizationId: organization.id,
@@ -277,6 +283,7 @@ export class PayrollService {
           address: memberAddress,
           name: member.name,
           role: member.role,
+          email: accountByAddress.get(memberAddress)?.email ?? null,
         })),
         tx
       );
@@ -295,6 +302,7 @@ export class PayrollService {
             address: creatorAddress,
             name: byAddress.get(creatorAddress)?.name ?? creatorAccount?.fullName ?? "Creator",
             role: "employee",
+            email: creatorAccount?.email ?? null,
             jobRole: data.creatorEmployment.jobRole,
             salary: creatorSalary,
           },

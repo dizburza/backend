@@ -433,11 +433,15 @@ export const organizationMembers = pgTable(
       t.address,
       t.role
     ),
-    // One invitation per email per organization, so a CSV imported twice does
-    // not produce two rows for the same person to claim.
+    // One open invitation per email per organization, so a CSV imported twice
+    // does not produce two rows for the same person to claim. Scoped to
+    // unclaimed rows only: once a row is joined there is nothing left for a
+    // second invitation to collide with, which is what lets a creator's owner
+    // row and employee row share one email, and lets an already-joined row
+    // be matched by claim without blocking the pair it belongs with.
     uniqueIndex("organization_members_org_email_key")
       .on(t.organizationId, sql`lower(${t.email})`)
-      .where(sql`email is not null and is_active`),
+      .where(sql`email is not null and is_active and status != 'joined'`),
     // The employment cap. Enforced in the database rather than in a service
     // check, so a concurrent add cannot slip a second employer past it. An
     // unclaimed invitation has no address, so it does not consume the cap:

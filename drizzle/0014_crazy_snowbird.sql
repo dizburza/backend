@@ -1,0 +1,2 @@
+DROP INDEX "organization_members_org_email_key";--> statement-breakpoint
+CREATE UNIQUE INDEX "organization_members_org_email_key" ON "organization_members" USING btree ("organization_id",lower("email")) WHERE email is not null and is_active and status != 'joined';

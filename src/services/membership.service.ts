@@ -176,6 +176,7 @@ export class MembershipService {
       name: string;
       role: MembershipRole;
       userId?: string | null;
+      email?: string | null;
       jobRole?: string | null;
       salary?: string | null;
       department?: string | null;
@@ -199,6 +200,7 @@ export class MembershipService {
           set: {
             name: values.name,
             userId: values.userId ?? null,
+            email: values.email ?? null,
             jobRole: values.jobRole ?? null,
             salary: values.salary ?? null,
             department: values.department ?? null,
@@ -238,6 +240,7 @@ export class MembershipService {
       name: string;
       role: MembershipRole;
       userId?: string | null;
+      email?: string | null;
     }>,
     tx: Pick<typeof db, "insert"> = db
   ): Promise<void> {
@@ -322,18 +325,34 @@ export class MembershipService {
    * Attach a newly registered user to memberships created before they signed up.
    *
    * Signers are named by address during setup, often before the person has an
-   * account, so the link is made here rather than being lost.
+   * account, so the link is made here rather than being lost. The email goes
+   * on too: a signer's row otherwise never gets one, and without it someone
+   * typing that signer's email into an invite link is told "not on the staff
+   * list" instead of the truth, that the row exists and is already theirs.
    */
-  static async linkUser(userId: string, walletAddress: string): Promise<void> {
+  static async linkUser(userId: string, walletAddress: string, email?: string | null): Promise<void> {
+    const address = walletAddress.toLowerCase();
+
     await db
       .update(organizationMembers)
       .set({ userId })
-      .where(
-        and(
-          eq(organizationMembers.address, walletAddress.toLowerCase()),
-          sql`${organizationMembers.userId} is null`
-        )
-      );
+      .where(and(eq(organizationMembers.address, address), sql`${organizationMembers.userId} is null`));
+
+    // Separate from the update above: only a row with no email of its own
+    // gets this one, so a signer's personal email never overwrites whatever
+    // HR seeded an employee row with.
+    if (email) {
+      await db
+        .update(organizationMembers)
+        .set({ email })
+        .where(
+          and(
+            eq(organizationMembers.address, address),
+            eq(organizationMembers.userId, userId),
+            sql`${organizationMembers.email} is null`
+          )
+        );
+    }
   }
 
   /**

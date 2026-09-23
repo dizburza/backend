@@ -138,8 +138,9 @@ export class AuthService {
       .returning();
 
     // An organization may have named this address as a signer or employee
-    // before the person registered. Claim those rows now.
-    await MembershipService.linkUser(user.id, user.walletAddress);
+    // before the person registered. Claim those rows now, and give any that
+    // has none yet the email this account just registered with.
+    await MembershipService.linkUser(user.id, user.walletAddress, user.email);
 
     const context = await this.resolveContext(user);
     const token = this.generateToken(user);
