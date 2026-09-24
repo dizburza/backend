@@ -165,6 +165,25 @@ export class SignerChangeService {
     return (await this.getByProposalId(proposalId))!;
   }
 
+  /**
+   * Record a bootstrap addSigner() call: the creator adding directly, before
+   * the organization is constituted, so there is no proposal ledger row to
+   * update, only the membership-side effect that a proposal's execution would
+   * otherwise carry.
+   */
+  static async recordBootstrapAdd(data: {
+    organizationId: string;
+    subjectAddress: string;
+    subjectName: string;
+  }): Promise<void> {
+    await MembershipService.upsert({
+      organizationId: data.organizationId,
+      address: data.subjectAddress,
+      name: data.subjectName,
+      role: "signer",
+    });
+  }
+
   static async getByProposalId(proposalId: string): Promise<SignerChangeDetail | null> {
     const [row] = await db
       .select()

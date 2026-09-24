@@ -78,4 +78,22 @@ export class SignerChangeController {
     const proposals = await SignerChangeService.getForOrganization(organizationId);
     ApiResponse.success(res, { proposals });
   });
+
+  /**
+   * POST /api/organizations/:id/signers
+   * Record a bootstrap addSigner() call after the frontend calls the
+   * contract directly, before the organization is constituted.
+   */
+  static readonly recordBootstrapAdd = asyncHandler(async (req: Request, res: Response) => {
+    const organizationId = firstParam(req.params.id);
+    const { subjectAddress, subjectName } = req.body;
+
+    await SignerChangeService.recordBootstrapAdd({
+      organizationId,
+      subjectAddress,
+      subjectName,
+    });
+
+    ApiResponse.created(res, null, "Signer added");
+  });
 }

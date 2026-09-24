@@ -429,4 +429,16 @@ export const ValidationRules = {
       .matches(/^0x[0-9a-fA-F]{64}$/)
       .withMessage("Invalid transaction hash"),
   ],
+
+  recordBootstrapSignerAdd: [
+    body("subjectAddress")
+      .custom(ValidationUtil.isValidAddress)
+      .withMessage("Invalid subject address"),
+    body("subjectName")
+      .trim()
+      .notEmpty()
+      .withMessage("Subject name is required")
+      .isLength({ min: 1, max: 100 })
+      .withMessage("Subject name must be 1-100 characters"),
+  ],
 };

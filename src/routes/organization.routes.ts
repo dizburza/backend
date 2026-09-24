@@ -255,4 +255,20 @@ router.post(
   SignerChangeController.recordExecution
 );
 
+/**
+ * Bootstrap only: the creator adds a signer directly, with no proposal to
+ * record against. This is what applies the membership-side effect that
+ * recordExecution otherwise carries.
+ */
+router.post(
+  "/:id/signers",
+  authenticate,
+  requireOrganizationSigner,
+  validate([
+    param("id").isUUID().withMessage("Invalid organization ID"),
+    ...ValidationRules.recordBootstrapSignerAdd,
+  ]),
+  SignerChangeController.recordBootstrapAdd
+);
+
 export default router;
