@@ -125,6 +125,52 @@ describe("voting", () => {
     );
   });
 
+  it("recovers once bootstrap catches up, instead of staying rejected forever", async () => {
+    // Raised while only the owner exists: 1 of a declared quorum of 3. Genuinely
+    // unreachable at that instant, so computing "rejected" here is correct. The
+    // bug was that the old check pinned unreachability to signerCountAtCreation,
+    // a snapshot that never changes, so it stayed rejected even after the two
+    // signers who complete bootstrap had joined and could have voted it through.
+    const owner = await user("Owner");
+    const second = await user("Second");
+    const third = await user("Third");
+    const org = await organization({ owner: owner.address, quorum: 3 });
+
+    const proposal = (await raise(owner, org.id)).body.data;
+    assert.equal(proposal.signerCountAtCreation, 1);
+
+    const beforeBootstrap = await owner.call(`/proposals/${proposal.id}`);
+    assert.equal(
+      beforeBootstrap.body.data.status,
+      "rejected",
+      "1 signer can never alone reach a quorum of 3, so this is correctly unreachable for now"
+    );
+
+    await sql`insert into organization_members (organization_id, address, name, role)
+              values (${org.id}, ${second.address}, 'Second', 'signer')`;
+    await sql`insert into organization_members (organization_id, address, name, role)
+              values (${org.id}, ${third.address}, 'Third', 'signer')`;
+
+    const afterBootstrap = await owner.call(`/proposals/${proposal.id}`);
+    assert.equal(
+      afterBootstrap.body.data.status,
+      "open",
+      "3 signers now exist, so 3 of 3 is reachable again and the proposal must recover"
+    );
+
+    await vote(owner, proposal.id, "for");
+    const afterFirstVote = await owner.call(`/proposals/${proposal.id}`);
+    assert.equal(
+      afterFirstVote.body.data.status,
+      "open",
+      "2 more signers can still vote for, so 3 of 3 remains reachable"
+    );
+
+    await vote(second, proposal.id, "for");
+    const decided = await vote(third, proposal.id, "for");
+    assert.equal(decided.body.data.status, "passed");
+  });
+
   it("refuses a signer of another organization", async () => {
     const owner = await user("Owner");
     const second = await user("Second");

@@ -1,7 +1,7 @@
 import { ethers } from "ethers";
-import { and, desc, eq, inArray, lte } from "drizzle-orm";
+import { and, desc, eq, inArray, lte, sql } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { organizations, proposalVotes, proposals } from "../db/schema.js";
+import { organizationMembers, organizations, proposalVotes, proposals } from "../db/schema.js";
 import type { Proposal, ProposalVote } from "../db/types.js";
 import { AppError } from "../middlewares/errorHandler.middleware.js";
 import { MembershipService } from "./membership.service.js";
@@ -38,6 +38,7 @@ export class ProposalService {
     proposal: Proposal,
     votesFor: number,
     votesAgainst: number,
+    currentSignerCount: number,
     now = new Date()
   ): Proposal["status"] {
     if (proposal.status === "cancelled") return "cancelled";
@@ -51,9 +52,11 @@ export class ProposalService {
     // does. Waiting out the clock on a decided question helps nobody.
     if (votesAgainst >= proposal.votesRequired) return "rejected";
 
-    // No longer reachable: even every remaining signer voting for would fall
-    // short, so the proposal is finished whatever the clock says.
-    const undecided = proposal.signerCountAtCreation - votesFor - votesAgainst;
+    // Who can still show up to vote is a live fact, not the headcount from
+    // when the proposal was raised: bootstrap adds signers one at a time, so
+    // a proposal raised before quorum existed must stay reachable once it
+    // does. Only the bar itself (votesRequired) is snapshotted.
+    const undecided = currentSignerCount - votesFor - votesAgainst;
     if (votesFor + Math.max(0, undecided) < proposal.votesRequired) return "rejected";
 
     if (now > proposal.closesAt) return "expired";
@@ -66,14 +69,29 @@ export class ProposalService {
     if (rows.length === 0) return [];
 
     const ids = rows.map((r) => r.proposal.id);
+    const organizationIds = [...new Set(rows.map((r) => r.proposal.organizationId))];
 
-    const [votes, token] = await Promise.all([
+    const [votes, token, signerCounts] = await Promise.all([
       db
         .select()
         .from(proposalVotes)
         .where(inArray(proposalVotes.proposalId, ids))
         .orderBy(desc(proposalVotes.createdAt)),
       TokenService.getDefault(),
+      db
+        .select({
+          organizationId: organizationMembers.organizationId,
+          count: sql<number>`count(*)::int`,
+        })
+        .from(organizationMembers)
+        .where(
+          and(
+            inArray(organizationMembers.organizationId, organizationIds),
+            inArray(organizationMembers.role, ["owner", "signer"]),
+            eq(organizationMembers.isActive, true)
+          )
+        )
+        .groupBy(organizationMembers.organizationId),
     ]);
 
     const byProposal = new Map<string, ProposalVote[]>();
@@ -83,14 +101,20 @@ export class ProposalService {
       byProposal.set(vote.proposalId, list);
     }
 
+    const signerCountByOrg = new Map(signerCounts.map((r) => [r.organizationId, r.count]));
+
     return rows.map(({ proposal, organizationName, organizationSlug }) => {
       const cast = byProposal.get(proposal.id) ?? [];
       const votesFor = cast.filter((v) => v.choice === "for").length;
       const votesAgainst = cast.length - votesFor;
+      // Falls back to the snapshot only if the count query somehow missed the
+      // organization, which keeps this from ever being stricter than before.
+      const currentSignerCount =
+        signerCountByOrg.get(proposal.organizationId) ?? proposal.signerCountAtCreation;
 
       return {
         ...proposal,
-        status: ProposalService.resolveStatus(proposal, votesFor, votesAgainst),
+        status: ProposalService.resolveStatus(proposal, votesFor, votesAgainst, currentSignerCount),
         amountFormatted:
           proposal.amount === null
             ? null
