@@ -152,3 +152,44 @@ describe("recording lines for a batch", () => {
     );
   });
 });
+
+describe("previewing PAYE before a batch is raised", () => {
+  it("quotes nothing for an organization that has not enabled tax", async () => {
+    const owner = await user("PreviewOff");
+    const org = await organization({ owner: owner.address, quorum: 1 });
+
+    const result = await TaxService.previewForAddresses(org.id, [owner.address]);
+
+    // A deduction that will never be taken is worse than no figure at all.
+    assert.equal(result.taxEnabled, false);
+    assert.deepEqual(result.lines, []);
+  });
+
+  it("refuses when tax is on but no state of residence is set", async () => {
+    const owner = await user("PreviewNoState");
+    const org = await organization({ owner: owner.address, quorum: 1 });
+
+    await sql`update organizations set tax_enabled = true where id = ${org.id}`;
+
+    await assert.rejects(
+      () => TaxService.previewForAddresses(org.id, [owner.address]),
+      /no default state of residence/
+    );
+  });
+
+  it("ignores addresses that are not employees of this organization", async () => {
+    const owner = await user("PreviewStranger");
+    const org = await organization({ owner: owner.address, quorum: 1 });
+    const stranger = await user("PreviewOutsider");
+
+    await sql`
+      update organizations
+      set tax_enabled = true, default_tax_state_code = 'LA'
+      where id = ${org.id}`;
+
+    const result = await TaxService.previewForAddresses(org.id, [stranger.address]);
+
+    assert.equal(result.taxEnabled, true);
+    assert.deepEqual(result.lines, []);
+  });
+});

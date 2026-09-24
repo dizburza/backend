@@ -3,6 +3,7 @@ import { db } from "../db/client.js";
 import {
   batchPayrollRecipients,
   batchPayrolls,
+  organizationMembers,
   organizations,
   payrollTaxLines,
   taxAuthorities,
@@ -16,6 +17,7 @@ import type {
   TaxRegime,
 } from "../db/types.js";
 import { AppError } from "../middlewares/errorHandler.middleware.js";
+import { TokenService } from "./token.service.js";
 
 /**
  * Percentages are stored with three decimal places. Scaling by 100_000 lets a
@@ -341,6 +343,90 @@ export class TaxService {
       .returning({ id: payrollTaxLines.id });
 
     return inserted.length;
+  }
+
+  /**
+   * What PAYE would be withheld if these people were paid now.
+   *
+   * Nothing is written. This exists so the signer raising a batch sees the same
+   * figures the receipt will carry, computed from the organization's own regime
+   * rather than a rate assumed in the browser. An organization without tax
+   * enabled gets `taxEnabled: false` and no per-person lines, because the
+   * alternative is quoting a deduction that will never be taken.
+   */
+  static async previewForAddresses(
+    organizationId: string,
+    addresses: string[],
+    on: Date = new Date()
+  ): Promise<{
+    taxEnabled: boolean;
+    regimeVerified: boolean;
+    lines: {
+      address: string;
+      grossFormatted: string;
+      taxFormatted: string;
+      netFormatted: string;
+    }[];
+  }> {
+    const [organization] = await db
+      .select({
+        taxEnabled: organizations.taxEnabled,
+        defaultTaxStateCode: organizations.defaultTaxStateCode,
+      })
+      .from(organizations)
+      .where(eq(organizations.id, organizationId))
+      .limit(1);
+
+    if (!organization?.taxEnabled) {
+      return { taxEnabled: false, regimeVerified: false, lines: [] };
+    }
+
+    if (!organization.defaultTaxStateCode) {
+      throw new AppError(
+        "This organization has tax enabled but no default state of residence",
+        409
+      );
+    }
+
+    const wanted = new Set(addresses.map((a) => a.toLowerCase()));
+    const members = await db
+      .select({
+        address: organizationMembers.address,
+        salary: organizationMembers.salary,
+        salaryIsGross: organizationMembers.salaryIsGross,
+      })
+      .from(organizationMembers)
+      .where(
+        and(
+          eq(organizationMembers.organizationId, organizationId),
+          eq(organizationMembers.role, "employee"),
+          eq(organizationMembers.isActive, true)
+        )
+      );
+
+    const { regime } = await TaxService.resolveRegime("NG", on);
+
+    const lines = [];
+    for (const member of members) {
+      if (!member.address || !wanted.has(member.address.toLowerCase())) continue;
+      if (member.salary === null) continue;
+
+      const computation = await TaxService.computeForEmployee({
+        salaryMinor: BigInt(member.salary),
+        salaryIsGross: member.salaryIsGross,
+        stateCode: organization.defaultTaxStateCode,
+        on,
+      });
+
+      lines.push({
+        address: member.address,
+        grossFormatted: await TokenService.format(computation.grossMinor),
+        taxFormatted: await TokenService.format(computation.taxMinor),
+        netFormatted: await TokenService.format(computation.netMinor),
+      });
+    }
+
+    return { taxEnabled: true, regimeVerified: regime.verified, lines };
   }
 
   /** Lines for one batch, for a payslip run or a remittance schedule. */

@@ -1,5 +1,5 @@
 import { Router } from "express";
-import { param } from "express-validator";
+import { body, param } from "express-validator";
 import { TaxController } from "../controllers/tax.controller.js";
 import { authenticate } from "../middlewares/auth.middleware.js";
 import { requireOrganizationSigner } from "../middlewares/membership.middleware.js";
@@ -35,6 +35,20 @@ router.get(
   ]),
   requireOrganizationSigner,
   TaxController.linesForBatch
+);
+
+// What would be withheld if these people were paid now. Computes nothing
+// durable, but it pairs salaries with addresses, so it is a signer's to read.
+router.post(
+  "/organizations/:organizationId/preview",
+  authenticate,
+  validate([
+    param("organizationId").isUUID().withMessage("Invalid organization ID"),
+    body("addresses").isArray({ min: 1, max: 500 }).withMessage("addresses must be a non-empty array"),
+    body("addresses.*").isEthereumAddress().withMessage("Invalid wallet address"),
+  ]),
+  requireOrganizationSigner,
+  TaxController.preview
 );
 
 export default router;

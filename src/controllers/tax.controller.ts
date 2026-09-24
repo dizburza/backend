@@ -56,4 +56,13 @@ export class TaxController {
   static readonly linesForBatch = asyncHandler(async (req: Request, res: Response) => {
     ApiResponse.success(res, await TaxService.linesForBatch(firstParam(req.params.batchId)));
   });
+
+  /** POST /api/tax/organizations/:organizationId/preview */
+  static readonly preview = asyncHandler(async (req: Request, res: Response) => {
+    const addresses = req.body.addresses as string[];
+    ApiResponse.success(
+      res,
+      await TaxService.previewForAddresses(firstParam(req.params.organizationId), addresses)
+    );
+  });
 }
