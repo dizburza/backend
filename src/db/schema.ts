@@ -96,6 +96,17 @@ export const auditAction = pgEnum("audit_action", ["ADD", "UPDATE", "REMOVE"]);
 
 export const taxStatus = pgEnum("tax_status", ["computed", "remitted", "failed"]);
 
+/**
+ * What a line in a batch is paying for. The contract takes a flat list of
+ * addresses, so the distinction lives here: PAYE rides along in the same batch
+ * as the salaries it was withheld from, and anything reasoning about employees
+ * has to be able to tell the two apart.
+ */
+export const batchRecipientKind = pgEnum("batch_recipient_kind", [
+  "employee",
+  "tax_authority",
+]);
+
 export const relayStatus = pgEnum("relay_status", ["submitted", "confirmed", "failed"]);
 
 /**
@@ -279,9 +290,16 @@ export const payrollTaxLines = pgTable(
     breakdown: jsonb("breakdown").$type<Record<string, unknown>>(),
 
     status: taxStatus("status").notNull().default("computed"),
-    /** The on-chain transfer that settled the tax portion, once executed. */
+    /** The on-chain transfer that settled the tax portion, once an authority accepts one. */
     remittanceTxHash: txHash("remittance_tx_hash"),
+    /**
+     * Today, remittance is a bank transfer to the state IRS, not a chain
+     * transaction, so this is what the settlement is actually evidenced by:
+     * the payment reference a signer typed in after sending it off platform.
+     */
+    remittanceReference: text("remittance_reference"),
     remittedAt: timestamp("remitted_at", { withTimezone: true }),
+    remittedBy: uuid("remitted_by").references(() => users.id, { onDelete: "set null" }),
 
     createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   },
@@ -664,6 +682,7 @@ export const batchPayrollRecipients = pgTable(
     walletAddress: address("wallet_address").notNull(),
     amount: tokenAmount("amount").notNull(),
     employeeName: text("employee_name").notNull(),
+    kind: batchRecipientKind("kind").notNull().default("employee"),
   },
   (t) => [index("batch_payroll_recipients_batch_idx").on(t.batchId)]
 );

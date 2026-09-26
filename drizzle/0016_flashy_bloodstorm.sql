@@ -1,0 +1,2 @@
+CREATE TYPE "public"."batch_recipient_kind" AS ENUM('employee', 'tax_authority');--> statement-breakpoint
+ALTER TABLE "batch_payroll_recipients" ADD COLUMN "kind" "batch_recipient_kind" DEFAULT 'employee' NOT NULL;
