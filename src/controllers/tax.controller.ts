@@ -54,7 +54,10 @@ export class TaxController {
 
   /** GET /api/tax/organizations/:organizationId/batches/:batchId */
   static readonly linesForBatch = asyncHandler(async (req: Request, res: Response) => {
-    ApiResponse.success(res, await TaxService.linesForBatch(firstParam(req.params.batchId)));
+    ApiResponse.success(
+      res,
+      await TaxService.linesForBatchDisplay(firstParam(req.params.batchId))
+    );
   });
 
   /** POST /api/tax/organizations/:organizationId/preview */
@@ -64,5 +67,14 @@ export class TaxController {
       res,
       await TaxService.previewForAddresses(firstParam(req.params.organizationId), addresses)
     );
+  });
+
+  /** POST /api/tax/lines/:lineId/remit */
+  static readonly remit = asyncHandler(async (req: Request, res: Response) => {
+    const line = await TaxService.markRemitted(firstParam(req.params.lineId), {
+      reference: String(req.body.reference),
+      remittedBy: req.user!.id,
+    });
+    ApiResponse.success(res, line);
   });
 }

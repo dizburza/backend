@@ -801,6 +801,7 @@ export class PayrollService {
           walletAddress: r.walletAddress.toLowerCase(),
           amount: r.amount,
           employeeName: r.employeeName,
+          kind: r.kind ?? "employee",
         }))
       );
 

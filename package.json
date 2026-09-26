@@ -16,7 +16,8 @@
     "test": "tsx --test tests/**/*.test.ts",
     "test:watch": "tsx --test --watch tests/**/*.test.ts",
     "test:setup": "drizzle-kit migrate",
-    "db:seed:tax": "tsx src/db/seed-tax.ts"
+    "db:seed:tax": "tsx src/db/seed-tax.ts",
+    "db:tax-authority-wallet": "tsx src/db/set-tax-authority-wallet.ts"
   },
   "keywords": [
     "blockchain",

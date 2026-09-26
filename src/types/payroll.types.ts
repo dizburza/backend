@@ -124,6 +124,8 @@ export interface CreateBatchInput {
     walletAddress: string;
     amount: string;
     employeeName: string;
+    /** Defaults to an employee. The PAYE leg rides in the same batch. */
+    kind?: "employee" | "tax_authority";
   }[];
   /** The proposal this batch settles, if it settles one. */
   proposalId?: string | null;

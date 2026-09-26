@@ -338,16 +338,19 @@ export class TaxDocumentService {
    * Says plainly that the money has not moved.
    *
    * A receipt that showed only a deducted figure would read as evidence of
-   * remittance. Nothing is remitted until `remittanceTxHash` is set, and no
-   * state revenue service accepts on-chain settlement yet.
+   * remittance. Nothing is remitted until `status` moves off `computed`, which
+   * today happens through a signer recording an off-platform bank transfer,
+   * not a chain transaction: no state revenue service accepts on-chain
+   * settlement yet.
    */
   private static settlement(PDFKit: PDFKit.PDFDocument, data: ReceiptData): void {
     PDFKit.moveDown(1);
 
-    if (data.line.remittanceTxHash) {
+    const reference = data.line.remittanceReference ?? data.line.remittanceTxHash;
+    if (reference) {
       PDFKit.font("Helvetica").fontSize(9).text(
-        `Remitted ${data.line.remittedAt?.toISOString().slice(0, 10) ?? ""} ` +
-          `in ${data.line.remittanceTxHash}`
+        `Remitted ${data.line.remittedAt?.toISOString().slice(0, 10) ?? ""}, ` +
+          `reference ${reference}`
       );
       return;
     }

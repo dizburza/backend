@@ -349,6 +349,10 @@ export const ValidationRules = {
       .withMessage("Employee name is required")
       .isLength({ min: 2, max: 100 })
       .withMessage("Employee name must be 2-100 characters"),
+    body("recipients.*.kind")
+      .optional()
+      .isIn(["employee", "tax_authority"])
+      .withMessage("Invalid recipient kind"),
     body("proposalId").optional({ values: "null" }).isUUID().withMessage("Invalid proposal ID"),
     body("txHash")
       .optional({ values: "falsy" })

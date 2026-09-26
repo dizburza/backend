@@ -256,13 +256,24 @@ export class TaxService {
    * `salaryIsGross` governs how a batch is built, not how it is accounted for
    * afterwards.
    *
-   * Nothing is remitted here. Lines land as `computed`, and the money is still
-   * the employer's until a remittance sets `remittanceTxHash`. The authorities
-   * cannot receive on chain yet, which is what `isPlaceholder` records, and
-   * inventing a transfer to a placeholder address would lose real money.
+   * Where the batch carried a tax authority as a recipient, the withheld total
+   * left the treasury in the same transaction as the salaries, so those lines
+   * land `remitted` against the batch's own hash. Where it did not, they land
+   * `computed` and the money is still the employer's until someone records a
+   * settlement. A placeholder authority never receives a transfer, so a batch
+   * built against one leaves its lines `computed` like before.
    *
    * Idempotent by `(batchId, walletAddress)`, so a replayed execution webhook
    * cannot double-count someone's PAYE.
+   *
+   * **Single state, and that is a limitation rather than a decision.** PAYE is
+   * owed to the state the employee resides in, but the membership records no
+   * state, so every line here is attributed to the employer's
+   * `defaultTaxStateCode`. For staff living elsewhere that is the wrong
+   * authority. It costs nothing while authorities are placeholders and the
+   * lines are only records; once one has a real wallet it is money sent to a
+   * revenue service that is not owed it. Give the membership a state before
+   * relying on this for anyone who does not live where their employer does.
    */
   static async recordLinesForBatch(batchId: string, on: Date = new Date()): Promise<number> {
     const [batch] = await db
@@ -294,15 +305,40 @@ export class TaxService {
       );
     }
 
+    // Employees only. The authority rides in the same batch as a recipient, and
+    // computing PAYE on the PAYE payment would inflate every batch's liability
+    // with a figure that looks plausible.
     const recipients = await db
       .select()
       .from(batchPayrollRecipients)
-      .where(eq(batchPayrollRecipients.batchId, batchId));
+      .where(
+        and(
+          eq(batchPayrollRecipients.batchId, batchId),
+          eq(batchPayrollRecipients.kind, "employee")
+        )
+      );
 
     if (recipients.length === 0) return 0;
 
     const { regime, bands } = await TaxService.resolveRegime("NG", on);
     const authority = await TaxService.resolveAuthority(organization.defaultTaxStateCode);
+
+    // The batch settles its own PAYE when it carried the authority as a
+    // recipient. Matched on the address actually paid rather than on the
+    // authority's current address, which may since have been rotated.
+    const [authorityLeg] = await db
+      .select({ id: batchPayrollRecipients.id })
+      .from(batchPayrollRecipients)
+      .where(
+        and(
+          eq(batchPayrollRecipients.batchId, batchId),
+          eq(batchPayrollRecipients.kind, "tax_authority"),
+          eq(batchPayrollRecipients.walletAddress, authority.walletAddress.toLowerCase())
+        )
+      )
+      .limit(1);
+
+    const settledByBatch = Boolean(authorityLeg && batch.txHash);
 
     const rows = recipients.map((recipient) => {
       const computation = TaxService.solveGrossForNet(
@@ -321,6 +357,9 @@ export class TaxService {
         netMinor: computation.netMinor,
         regimeId: regime.id,
         taxAuthorityId: authority.id,
+        status: settledByBatch ? ("remitted" as const) : ("computed" as const),
+        remittanceTxHash: settledByBatch ? batch.txHash : null,
+        remittedAt: settledByBatch ? new Date() : null,
         breakdown: {
           regimeName: computation.regimeName,
           // Carried onto the line rather than looked up later, so a receipt
@@ -361,11 +400,30 @@ export class TaxService {
   ): Promise<{
     taxEnabled: boolean;
     regimeVerified: boolean;
+    /**
+     * Where the withheld total is paid, and whether that address is real.
+     * A placeholder authority must not receive a transfer, so the browser is
+     * told which it is rather than being left to assume.
+     *
+     * One authority for the whole batch, resolved from the organization's
+     * default state. That is only right while everyone paid lives where their
+     * employer does, since PAYE follows the employee's state of residence.
+     */
+    authority: { name: string; address: string; isPlaceholder: boolean } | null;
     lines: {
       address: string;
       grossFormatted: string;
       taxFormatted: string;
       netFormatted: string;
+      /**
+       * Base units, so the browser composes the payroll transaction from the
+       * same figures the receipt will carry. Re-deriving a split in the
+       * browser from formatted decimals is how the transferred amount and the
+       * recorded amount drift apart.
+       */
+      grossMinor: string;
+      taxMinor: string;
+      netMinor: string;
     }[];
   }> {
     const [organization] = await db
@@ -378,7 +436,7 @@ export class TaxService {
       .limit(1);
 
     if (!organization?.taxEnabled) {
-      return { taxEnabled: false, regimeVerified: false, lines: [] };
+      return { taxEnabled: false, regimeVerified: false, authority: null, lines: [] };
     }
 
     if (!organization.defaultTaxStateCode) {
@@ -423,10 +481,24 @@ export class TaxService {
         grossFormatted: await TokenService.format(computation.grossMinor),
         taxFormatted: await TokenService.format(computation.taxMinor),
         netFormatted: await TokenService.format(computation.netMinor),
+        grossMinor: computation.grossMinor,
+        taxMinor: computation.taxMinor,
+        netMinor: computation.netMinor,
       });
     }
 
-    return { taxEnabled: true, regimeVerified: regime.verified, lines };
+    const authority = await TaxService.resolveAuthority(organization.defaultTaxStateCode);
+
+    return {
+      taxEnabled: true,
+      regimeVerified: regime.verified,
+      authority: {
+        name: authority.name,
+        address: authority.walletAddress,
+        isPlaceholder: authority.isPlaceholder,
+      },
+      lines,
+    };
   }
 
   /** Lines for one batch, for a payslip run or a remittance schedule. */
@@ -438,6 +510,49 @@ export class TaxService {
       .orderBy(asc(payrollTaxLines.walletAddress));
   }
 
+  /**
+   * A batch's lines with amounts formatted and a name attached, for the signer
+   * view that decides what still needs remitting.
+   *
+   * The name comes from `batch_payroll_recipients`, snapshotted when the batch
+   * was raised, rather than looked up again from current membership: a line
+   * describes the payment that happened, and who it happened to should not
+   * drift if that person is later renamed or leaves.
+   */
+  static async linesForBatchDisplay(batchId: string): Promise<
+    (PayrollTaxLine & {
+      grossFormatted: string;
+      taxFormatted: string;
+      netFormatted: string;
+      employeeName: string;
+    })[]
+  > {
+    const [lines, recipients] = await Promise.all([
+      TaxService.linesForBatch(batchId),
+      db
+        .select({
+          walletAddress: batchPayrollRecipients.walletAddress,
+          employeeName: batchPayrollRecipients.employeeName,
+        })
+        .from(batchPayrollRecipients)
+        .where(eq(batchPayrollRecipients.batchId, batchId)),
+    ]);
+
+    const nameByAddress = new Map(
+      recipients.map((r) => [r.walletAddress.toLowerCase(), r.employeeName])
+    );
+
+    return Promise.all(
+      lines.map(async (line) => ({
+        ...line,
+        grossFormatted: await TokenService.format(line.grossMinor),
+        taxFormatted: await TokenService.format(line.taxMinor),
+        netFormatted: await TokenService.format(line.netMinor),
+        employeeName: nameByAddress.get(line.walletAddress.toLowerCase()) ?? line.walletAddress,
+      }))
+    );
+  }
+
   /** One person's PAYE history, which is what a year end statement is built from. */
   static async linesForUser(userId: string): Promise<PayrollTaxLine[]> {
     return db
@@ -445,5 +560,46 @@ export class TaxService {
       .from(payrollTaxLines)
       .where(eq(payrollTaxLines.userId, userId))
       .orderBy(desc(payrollTaxLines.createdAt));
+  }
+
+  /**
+   * Records that PAYE already withheld has been sent to the state authority.
+   *
+   * No transaction happens here. No authority accepts on-chain settlement yet,
+   * so the reference is whatever the bank transfer gave back, typed in by the
+   * signer who sent it. This is the only thing that moves a line off
+   * `computed`, and once it does, the receipt stops saying the money is still
+   * the employer's.
+   */
+  static async markRemitted(
+    lineId: string,
+    params: { reference: string; remittedBy: string }
+  ): Promise<PayrollTaxLine> {
+    const reference = params.reference.trim();
+    if (!reference) throw new AppError("A remittance reference is required", 400);
+
+    const [line] = await db
+      .select({ id: payrollTaxLines.id, status: payrollTaxLines.status })
+      .from(payrollTaxLines)
+      .where(eq(payrollTaxLines.id, lineId))
+      .limit(1);
+
+    if (!line) throw new AppError("Tax line not found", 404);
+    if (line.status === "remitted") {
+      throw new AppError("This line has already been marked as remitted", 409);
+    }
+
+    const [updated] = await db
+      .update(payrollTaxLines)
+      .set({
+        status: "remitted",
+        remittanceReference: reference,
+        remittedAt: new Date(),
+        remittedBy: params.remittedBy,
+      })
+      .where(eq(payrollTaxLines.id, lineId))
+      .returning();
+
+    return updated;
   }
 }

@@ -2,7 +2,10 @@ import { Router } from "express";
 import { body, param } from "express-validator";
 import { TaxController } from "../controllers/tax.controller.js";
 import { authenticate } from "../middlewares/auth.middleware.js";
-import { requireOrganizationSigner } from "../middlewares/membership.middleware.js";
+import {
+  requireOrganizationSigner,
+  requireTaxLineSigner,
+} from "../middlewares/membership.middleware.js";
 import { validate } from "../middlewares/validation.middleware.js";
 
 const router = Router();
@@ -49,6 +52,23 @@ router.post(
   ]),
   requireOrganizationSigner,
   TaxController.preview
+);
+
+// Records that this line's PAYE was sent to the state authority off platform.
+// No transaction happens here, on chain or otherwise.
+router.post(
+  "/lines/:lineId/remit",
+  authenticate,
+  validate([
+    param("lineId").isUUID().withMessage("Invalid tax line ID"),
+    body("reference")
+      .isString()
+      .trim()
+      .isLength({ min: 1, max: 200 })
+      .withMessage("reference is required"),
+  ]),
+  requireTaxLineSigner,
+  TaxController.remit
 );
 
 export default router;

@@ -1,7 +1,7 @@
 import { Request, Response, NextFunction } from "express";
 import { eq } from "drizzle-orm";
 import { db } from "../db/client.js";
-import { batchPayrolls } from "../db/schema.js";
+import { batchPayrolls, payrollTaxLines } from "../db/schema.js";
 import { MembershipService } from "../services/membership.service.js";
 import { ApiResponse } from "../utils/response.util.js";
 
@@ -127,4 +127,37 @@ export const requireBatchSigner = async (
   }
 
   await authorize(req, res, next, batch.organizationId);
+};
+
+/**
+ * Tax lines are addressed by id, so the organization comes from the line, the
+ * same shape as `requireBatchSigner`. A line's own read rule (the person it
+ * describes, or a signer of the org that paid it) lives in the document
+ * service instead, because an employee may read their own line; only a signer
+ * may act on one, which is what this guards.
+ */
+export const requireTaxLineSigner = async (
+  req: Request,
+  res: Response,
+  next: NextFunction
+) => {
+  const lineId = firstParam(req.params.lineId);
+
+  if (!lineId) {
+    ApiResponse.error(res, "Tax line not identified", 400);
+    return;
+  }
+
+  const [line] = await db
+    .select({ organizationId: payrollTaxLines.organizationId })
+    .from(payrollTaxLines)
+    .where(eq(payrollTaxLines.id, lineId))
+    .limit(1);
+
+  if (!line) {
+    ApiResponse.error(res, "You are not a signer of this organization", 403);
+    return;
+  }
+
+  await authorize(req, res, next, line.organizationId);
 };
