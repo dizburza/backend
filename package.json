@@ -10,6 +10,7 @@
     "generateSignature": "ts-node tests/generateSignature.ts",
     "db:generate": "drizzle-kit generate",
     "db:migrate": "drizzle-kit migrate",
+    "db:migrate:deploy": "node dist/db/migrate.js",
     "db:studio": "drizzle-kit studio",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",

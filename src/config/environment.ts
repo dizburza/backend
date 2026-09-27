@@ -12,6 +12,9 @@ export const ENV = {
   PORT: Number.parseInt(process.env.PORT || "5050", 10),
 
   DATABASE_URL: process.env.DATABASE_URL,
+  // Unpooled endpoint, used only by migrations: some DDL does not survive
+  // PgBouncer in transaction mode. Falls back to DATABASE_URL when unset.
+  DIRECT_DATABASE_URL: process.env.DIRECT_DATABASE_URL,
   DATABASE_POOL_MAX: Number.parseInt(process.env.DATABASE_POOL_MAX || "10", 10),
 
   // Redis. Optional for a single instance, required once you run more than one:
