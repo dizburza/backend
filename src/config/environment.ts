@@ -105,6 +105,10 @@ export const ENV = {
   INDEXER_ENABLED: (process.env.INDEXER_ENABLED || "true").toLowerCase() !== "false",
   // Block to index from when no cursor exists yet. Set this to the block the
   // cNGN contract was deployed at so the first backfill isn't scanning genesis.
+  // Off by default: its eth_newFilter subscription expires on Alchemy and is
+  // never recreated, so it only spends requests until the WebSocket rewrite.
+  LIVE_LISTENER_ENABLED:
+    (process.env.LIVE_LISTENER_ENABLED || "false").toLowerCase() === "true",
   INDEXER_START_BLOCK: Number.parseInt(process.env.INDEXER_START_BLOCK || "0", 10),
   // Blocks to stay behind the chain tip so reorgs resolve before we persist.
   INDEXER_CONFIRMATIONS: Number.parseInt(process.env.INDEXER_CONFIRMATIONS || "12", 10),

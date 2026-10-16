@@ -41,10 +41,10 @@ try {
   // Latency hint on top of the indexer, so it follows the same switch: with
   // indexing off there is no cursor for it to run ahead of.
   const blockchainListener = new BlockchainListener();
-  if (ENV.INDEXER_ENABLED) {
+  if (ENV.INDEXER_ENABLED && ENV.LIVE_LISTENER_ENABLED) {
     await blockchainListener.start();
   } else {
-    logger.warn("⏸️  Blockchain listener disabled via INDEXER_ENABLED=false");
+    logger.info("Blockchain listener not started (LIVE_LISTENER_ENABLED is off or indexing is disabled)");
   }
 
   // Source of truth for history. Backfills on boot.

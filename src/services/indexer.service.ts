@@ -48,6 +48,13 @@ export class IndexerService {
   private stopped = false;
   private timer: NodeJS.Timeout | null = null;
   private pendingTimer: NodeJS.Timeout | null = null;
+  // Idle ticks must not touch Postgres, or the database never gets to suspend.
+  // Set when a hash is handed over on this instance; a slow poll covers hashes
+  // that arrived on another one.
+  private static pendingHint = true;
+  private lastPendingPoll = 0;
+  private cursorBlock: number | null = null;
+  private lastCursorWrite = 0;
   // Held for slightly longer than the poll interval so the leader keeps it
   // between ticks, but a crashed leader is replaced within one TTL.
   private readonly lock = new DistributedLock(
@@ -207,6 +214,8 @@ export class IndexerService {
   static async watchTransaction(txHash: string, submittedBy: string) {
     if (!/^0x[0-9a-fA-F]{64}$/.test(txHash)) return;
 
+    IndexerService.pendingHint = true;
+
     await db
       .insert(pendingTransactions)
       .values({
@@ -223,7 +232,7 @@ export class IndexerService {
    * the tip for reorg safety, which is correct but too slow for a send the user
    * is watching. This closes that gap without weakening the cursor.
    */
-  private async sweepPending() {
+  private async sweepPending(): Promise<number> {
     const stale = new Date(Date.now() - 10 * 60_000);
 
     // Give up on anything that never mined within ten minutes. The cursor will
@@ -256,6 +265,8 @@ export class IndexerService {
         logger.warn(`Pending sweep failed for ${entry.txHash}:`, error);
       }
     }
+
+    return pending.length;
   }
 
   /**
@@ -331,12 +342,14 @@ export class IndexerService {
    * interval between windows.
    */
   private async indexOnce(): Promise<boolean> {
-    const cursor = await IndexerService.loadCursor();
+    if (this.cursorBlock === null) {
+      this.cursorBlock = (await IndexerService.loadCursor()).lastIndexedBlock;
+    }
 
     const latest = await provider.getBlockNumber();
     // Stay behind the tip so a reorg resolves before we write anything.
     const safeTo = latest - ENV.INDEXER_CONFIRMATIONS;
-    const fromBlock = cursor.lastIndexedBlock + 1;
+    const fromBlock = this.cursorBlock + 1;
 
     if (safeTo < fromBlock) return false;
 
@@ -354,17 +367,28 @@ export class IndexerService {
       fetchReceipts: ENV.INDEXER_FETCH_RECEIPTS,
     });
 
-    // Worth retrying rather than dropping: the transfers above are already
-    // written, so losing this leaves the next pass re-reading a window it has
-    // already persisted. Idempotent, but paid for in RPC calls every time.
-    await withDbRetry(
-      () =>
-        db
-          .update(indexerCursors)
-          .set({ lastIndexedBlock: toBlock, lastRunAt: new Date(), lastError: null, updatedAt: new Date() })
-          .where(eq(indexerCursors.key, cursorKey())),
-      { label: "indexer cursor advance" }
-    );
+    this.cursorBlock = toBlock;
+
+    // Progress is held in memory and written when it matters: a transfer was
+    // found, a backfill is under way, or ten minutes have passed. Empty windows
+    // are cheap to re-read after a restart, but a write every tick keeps the
+    // database awake around the clock.
+    const behind = toBlock < safeTo;
+    if (
+      transfers.length > 0 ||
+      behind ||
+      Date.now() - this.lastCursorWrite > 10 * 60_000
+    ) {
+      await withDbRetry(
+        () =>
+          db
+            .update(indexerCursors)
+            .set({ lastIndexedBlock: toBlock, lastRunAt: new Date(), lastError: null, updatedAt: new Date() })
+            .where(eq(indexerCursors.key, cursorKey())),
+        { label: "indexer cursor advance" }
+      );
+      this.lastCursorWrite = Date.now();
+    }
 
     if (transfers.length > 0) {
       logger.info(
@@ -378,9 +402,16 @@ export class IndexerService {
 
   private async pendingTick() {
     if (this.pendingRunning || this.stopped) return;
+    if (
+      !IndexerService.pendingHint &&
+      Date.now() - this.lastPendingPoll < 60_000
+    ) {
+      return;
+    }
     this.pendingRunning = true;
     try {
-      await this.sweepPending();
+      this.lastPendingPoll = Date.now();
+      IndexerService.pendingHint = (await this.sweepPending()) > 0;
     } catch (error) {
       logger.warn("Pending sweep pass failed:", error);
     } finally {
@@ -393,7 +424,10 @@ export class IndexerService {
 
     // Only the leader advances the cursor. Followers stay warm and take over
     // if the leader dies.
-    if (!(await this.lock.acquire())) return;
+    if (!(await this.lock.acquire())) {
+      this.cursorBlock = null;
+      return;
+    }
 
     this.isRunning = true;
 
@@ -434,6 +468,7 @@ export class IndexerService {
     await this.lock.connect();
 
     const cursor = await IndexerService.loadCursor();
+    this.cursorBlock = cursor.lastIndexedBlock;
     logger.info(
       `🧭 Indexer starting from block ${cursor.lastIndexedBlock + 1} ` +
         `(${ENV.INDEXER_CONFIRMATIONS} confirmations behind tip)`
